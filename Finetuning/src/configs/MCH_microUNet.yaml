@@ -1,0 +1,35 @@
+# Hydra config converted from argparse defaults
+# Note: choices shown as comments for reference
+
+# This supresses the output folder
+# that otherwise is automaticly generated
+# by hydra
+defaults:
+  - _self_  
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+seed: 42
+
+task: meta_canopy_height        # choices: [dynamic_world, meta_canopy_height, building_footprints, dominant_leaf_type, building_footprints_binary]
+model_type: micro_unet
+checkpoint_area: "5k_small"     # choices: ["5k", "7k", "10k"] correesponding to A0, A+, and A++ respectively. small and large correspond to different model sizes. 
+
+train_area_bounds: [4000, 0, 5000, 5000]
+
+logging_directory: /home/user/finetuning_results
+
+# deep learning related
+lossfunction: l1
+batchsize: 32
+learningrate: 0.00005
+num_workers: 8
+epochs: 50
+warmup_epochs: 3
+gpu_id: 0
+validate_every_n_epochs: 1
+plot_every_n_epochs: 5
