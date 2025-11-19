@@ -75,3 +75,4 @@ And Results Directory
       ├─ dynamic_world/
       └─ ...
 ```
+To run the code, the Docker environment should be set up. The bash script, which starts the Docker container together with the desired mount points in `start_container.sh` for pretraining and fine-tuning separately.
