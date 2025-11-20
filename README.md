@@ -31,8 +31,8 @@ and fine-tuning results will be saved to:
 Before running the code, make sure the **Docker environment** is set up.  
 Use the provided bash scripts to start the corresponding Docker containers with the appropriate mount points:
 
-- `start_container.sh` — for **pretraining**  
-- `start_container_finetune.sh` — for **fine-tuning**
+- `Pretraining/docker/start_container.sh` — for **pretraining**  
+- `Finetuning/docker/start_container.sh` — for **fine-tuning**
 
 ---
 
