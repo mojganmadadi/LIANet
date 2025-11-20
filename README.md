@@ -10,7 +10,7 @@ The repository is structured into two main components:
 
 * **Pretraining:** Learn general continuous spatiotemporal representations.  
 * **Fine-tuning:** Adapt pretrained weights for specific downstream EO tasks (e.g., landcover classification, building footprint detection).
-* 
+
 ## Setup
 
 By default, **LIANet** expects the data and labels to be located in:
