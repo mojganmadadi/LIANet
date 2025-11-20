@@ -4,16 +4,59 @@ Official Repository for the Paper:
 📄 *Location Is All You Need: Continuous Spatiotemporal Neural Representations of Earth Observation Data*
 
 This repository contains the implementation of **LIANet**, a neural architecture designed for learning continuous spatiotemporal representations from Earth Observation (EO) data.  
-It includes scripts for pretraining and fine-tuning, needed to reproduce the results presented in the paper. The corresponding dataset and labels will be open sourced upon acceptance.
+It includes scripts for pretraining and fine-tuning, needed to reproduce the results presented in the paper. The corresponding dataset and labels will be open-sourced upon acceptance.
 
 The repository is structured into two main components:
 
 * **Pretraining:** Learn general continuous spatiotemporal representations.  
 * **Fine-tuning:** Adapt pretrained weights for specific downstream EO tasks (e.g., landcover classification, building footprint detection).
+* 
+## Setup
 
-By default, LIANet expects data and labels to be present in `~/Data/LIANet_data`.  
-The pretraining results will be stored in `~/Results/LIANet_results/Pretraining` and fine-tuning results will be stored in `~/Results/LIANet_results/Finetuning`.
+By default, **LIANet** expects the data and labels to be located in:
+```text
+~/Data/LIANet_data
+```
 
+Pretraining results will be saved to:
+```text
+~/Results/LIANet_results/Pretraining
+```
+and fine-tuning results will be saved to:
+```text
+~/Results/LIANet_results/Finetuning
+```
+
+
+Before running the code, make sure the **Docker environment** is set up.  
+Use the provided bash scripts to start the corresponding Docker containers with the appropriate mount points:
+
+- `start_container.sh` — for **pretraining**  
+- `start_container_finetune.sh` — for **fine-tuning**
+
+---
+
+## Pretraining
+
+Once Docker is running and the data are placed in `~/Data/LIANet_data`, start pretraining with:
+```bash
+python main.py
+```
+The pretrained model checkpoints will be automatically saved to:
+```text
+~/Results/LIANet_results/Pretraining
+```
+## Fine-tuning
+
+After obtaining the pretrained checkpoint, switch to the fine-tuning Docker environment.
+Assuming the labeled data are available in ~/Data/LIANet_data, start fine-tuning with:
+```text
+python train.py
+```
+The fine-tuned model outputs will be saved to:
+```text
+~/Results/LIANet_results/Finetuning
+```
 ---
 
 ## 📁 Repository Structure
@@ -75,4 +118,4 @@ And Results Directory
       ├─ dynamic_world/
       └─ ...
 ```
-To run the code, the Docker environment should be set up. The bash script, which starts the Docker container together with the desired mount points in `start_container.sh` for pretraining and fine-tuning separately.
+
