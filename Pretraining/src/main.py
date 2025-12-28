@@ -13,15 +13,14 @@ if project_root not in sys.path:
 
 @hydra.main(version_base = None,
             config_path="./configs/pretrain",
-            config_name="config.yaml")
-def main(config : DictConfig) -> None:
+            config_name="config_fourier.yaml")
+def main(config: DictConfig) -> None:
+    # must happen before importing anything that imports torch
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, config.gpus))
 
-    # we first have to set visible
-    # devices before importing any torch libs
-    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(x) for x in config.gpu_idx])
 
-    from trainer import setup_and_start_training 
-    setup_and_start_training(config)
+    from trainer import runDistributed 
+    runDistributed(config)
 
 
 
