@@ -10,21 +10,21 @@ hydra:
   run:  
     dir: .
 
-gpu_idx: [2]  # Single gpu run configuration implemented
+gpus: [0, 1, 2, 3, 4, 5, 6, 7]  # List of GPU ids to use, empty list means CPU
 seed: 44
 deterministic: True
 benchmark: False
 
-nEpochs: 225
-
+nEpochs: 900
+temporal_embedding_mode: "fourier_learned"
 # where to store results
 outputpath: "/home/user/pretraining_results"
-experimentname: "model_checkpoint"
+experimentname: ${temporal_embedding_mode}
 
-validation_epochs: 1 # Which epochs to run validation
-special_save_Epochs: [1] # Which chechpoints to save permanently, given as a list
+validation_epochs: 20 # Which epochs to run validation
+special_save_Epochs: [50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900] # Which chechpoints to save permanently, given as a list
 num_channels: 12 # Sentinel-2 has 12 channels
-complete_tile_size: 5000  # A0 =5000, A+=7071, A++=10980 (pixels)
+complete_tile_size: 20976  # A0 =5000, A+=7071, A++=10980 (pixels)
 
 
 trainroutine:
@@ -32,13 +32,17 @@ trainroutine:
 
 model:
   _target_: "models.LIANet.LIANetLight"
-  timestamp_dim: 4    # four seasons
-  levels: 11
+  timestamp_dim: 43
+  time_mode: ${temporal_embedding_mode}
+  num_time_frequencies: 8
+  time_input_dim: 3
+  time_mlp_hidden: 64
+  levels: 13
   n_min: 16
   growth: 2
-  table_size: 131072 # 2^17
+  table_size: 524288 # 2^19
   feat_dim: 128
-  complete_tile_size: 5000 # Sentinel-2 max tile size
+  complete_tile_size: 20976 # Sentinel-2 max tile size
   resunet_backbone_size: "small"
   bilinear: True
   out_channels: ${num_channels}
@@ -59,33 +63,43 @@ scheduler:
 
 dataset_train: 
   _target_: "dataset.LIANetPretrainingDataset"
-  iterations_per_epoch: 1024000 
-  topdir_dataset: "/home/user/data"
+  iterations_per_epoch: 1024000
+  topdir_dataset: "/home/user/data/extended_area_experiment_data"
   image_size: 128
   complete_tile_size: ${complete_tile_size}
+  tile_names: ["T32UPU", "T32UQU"]
+
 
 
 dataset_plot:
   _target_: "dataset.LIANetPretrainingPlotterDataset"
-  iterations_per_epoch: 128
-  topdir_dataset: "/home/user/data"
+  iterations_per_epoch: 512
+  topdir_dataset: "/home/user/data/extended_area_experiment_data"
   image_size: 128
   complete_tile_size: ${complete_tile_size}
+  tile_names: ["T32UPU", "T32UQU"]
+
 
 
 dataloader_train:
   _target_: "torch.utils.data.DataLoader"
   batch_size: 64
-  num_workers: 32
+  num_workers: 16
   drop_last: True
   pin_memory: True
   persistent_workers: True
+  prefetch_factor: 4
+
 
 dataloader_plot:
   _target_: "torch.utils.data.DataLoader"
   batch_size: 64
-  num_workers: 32
+  num_workers: 8
   drop_last: True
+  pin_memory: True
+  persistent_workers: True
+  prefetch_factor: 4
+
 
 validation_metrics:
   _target_: "metrics.regression_metrics"

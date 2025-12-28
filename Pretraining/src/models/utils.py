@@ -2,18 +2,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# 64-bit mixing constants
-_C1 = 0x9E3779B185EBCA87
-_C2 = 0xC2B2AE3D27D4EB4F
+_C1_T = torch.tensor(-7046029288634856825, dtype=torch.int64)
+_C2_T = torch.tensor(-4417276706812531889, dtype=torch.int64)
 
-def _fast_hash_2d(ix: torch.Tensor, iy: torch.Tensor, seed: torch.Tensor, T: int):
-    """
-    ix, iy: int64 tensors
-    seed:  scalar int64 tensor (per level), same device as ix/iy
-    return: int64 indices in [0, T)
-    """
-    h = ix.mul(_C1) ^ iy.mul(_C2) ^ seed
-    return torch.remainder(h, T).long()
+def _fast_hash_2d(ix, iy, seed, T):
+    c1 = _C1_T.to(device=ix.device)
+    c2 = _C2_T.to(device=ix.device)
+    h = torch.bitwise_xor(ix.to(torch.int64) * c1, iy.to(torch.int64) * c2)
+    h = torch.bitwise_xor(h, seed.to(torch.int64))
+    return torch.remainder(h, T).to(torch.int64)
+
+
 
 def group_norm(c: int) -> nn.GroupNorm:
     """

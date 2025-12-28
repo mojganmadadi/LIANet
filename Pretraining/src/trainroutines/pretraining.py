@@ -52,6 +52,8 @@ class LIANetTrainer:
         self.tb_writer = tb_writer
         self.validation_epochs = validation_epochs
 
+        self.use_amp = True
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
         self.globalstep = 0
         self.loss = 0
@@ -64,15 +66,22 @@ class LIANetTrainer:
 
         self.model.train() 
         for epoch in range(self.current_epoch, self.events.nEpochs + 1):
-            self.tb_writer.add_scalar(f"lr/over_epoch", self.optimizer.param_groups[0]["lr"], global_step=self.current_epoch)
+
+            if self.rank == 0:
+                self.tb_writer.add_scalar(f"lr/over_epoch", self.optimizer.param_groups[0]["lr"], global_step=self.current_epoch)
             self._train_one_epoch()
             if self.scheduler is not None:
                 self.scheduler.step()
 
+            if self.current_epoch in self.events.special_save_Epochs:
+                self._save_checkpoint()
             if self.current_epoch % self.validation_epochs == 0:
                 self.model.eval()
+                self._validate()
                 self._plot()         
                 self._save_checkpoint("latest_validation_checkpoint")  
+                if torch.distributed.is_available() and torch.distributed.is_initialized():
+                    torch.distributed.barrier()
                 self.model.train() 
             self.current_epoch += 1
         self.tb_writer.flush()
@@ -81,31 +90,41 @@ class LIANetTrainer:
    
     def _train_one_epoch(self):
          
-        pbar_train = tqdm(total=len(self.training_dataloader), desc=f"EPOCH: {self.current_epoch}",leave=False)
+        pbar_train = tqdm(
+            total=len(self.training_dataloader),
+            desc=f"EPOCH: {self.current_epoch}",
+            leave=False,
+            disable=(self.rank != 0),
+            position=0,
+            dynamic_ncols=True,
+        )
         
         runtime_buffer = deque(maxlen=10)
         running_mean_counter = 0
-        
+        # set epoch for proper shuffleing with DDP
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            self.training_dataloader.sampler.set_epoch(self.current_epoch)
         for batch_idx, batch in enumerate(self.training_dataloader, start=1): 
             
-            t0 = time.time()
+            if self.rank == 0:
+                t0 = time.time()
             self._train_one_batch(batch)
-            t1 = time.time()
-            runtime_buffer.append(t1 - t0)
-            running_mean_counter += 1
+            if self.rank == 0:
+                t1 = time.time()
+                runtime_buffer.append(t1 - t0)
+                running_mean_counter += 1
+                if running_mean_counter >= 20:
+                    if self.globalstep % 20 == 0:
+                        self.tb_writer.add_scalar(f"speed/mean_itter_time", np.mean(list(runtime_buffer)), global_step=self.globalstep)
 
-            if running_mean_counter >= 20:
-                if self.globalstep % 20 == 0:
-                    self.tb_writer.add_scalar(f"speed/mean_itter_time", np.mean(list(runtime_buffer)), global_step=self.globalstep)
+                if self.globalstep % 500 == 0:
+                    device = torch.cuda.current_device()
+                    allocated = torch.cuda.memory_allocated(device) / 1024**2  # MB
+                    reserved = torch.cuda.memory_reserved(device) / 1024**2    # MB
+                    self.tb_writer.add_scalar(f"gpu/allocated", allocated, global_step=self.globalstep)
+                    self.tb_writer.add_scalar(f"gpu/reserved", reserved, global_step=self.globalstep)
 
-            if self.globalstep % 20 == 0:
-                device = torch.cuda.current_device()
-                allocated = torch.cuda.memory_allocated(device) / 1024**2  # MB
-                reserved = torch.cuda.memory_reserved(device) / 1024**2    # MB
-                self.tb_writer.add_scalar(f"gpu/allocated", allocated, global_step=self.globalstep)
-                self.tb_writer.add_scalar(f"gpu/reserved", reserved, global_step=self.globalstep)
-
-            pbar_train.update()
+            pbar_train.update(1)
 
         pbar_train.close()        
         
@@ -116,82 +135,158 @@ class LIANetTrainer:
         x_s2 = batch["x_s2"]
         y_s2 = batch["y_s2"]
         s2data = batch["s2data"]
-        timestamp = batch["timestamp"]
-        
+        time_idx = batch["time_idx"]
+        delta_days = batch["delta_days"]
+        doy_sin = batch["doy_sin"]
+        doy_cos = batch["doy_cos"]
 
         x_s2 = x_s2.cuda(self.rank)
         y_s2 = y_s2.cuda(self.rank)
         s2data = s2data.cuda(self.rank)
-        timestamp = timestamp.cuda(self.rank)
-        prediction = self.model(timestamp, x_s2, y_s2)
+        time_idx = time_idx.cuda(self.rank)
+        delta_days = delta_days.cuda(self.rank)
+        doy_sin = doy_sin.cuda(self.rank)
+        doy_cos = doy_cos.cuda(self.rank)
 
-        self.loss = self.lossfunction(prediction, s2data)
-        self.optimizer.zero_grad()
-        self.loss.backward()
+        self.optimizer.zero_grad(set_to_none=True)
+        with torch.cuda.amp.autocast(enabled=self.use_amp, dtype=torch.float16):
+            m = self.model.module if hasattr(self.model, "module") else self.model
 
+            if m.time_mode == "index":
+                prediction = self.model(time_idx, x_s2, y_s2)
+            elif m.time_mode == "sinusoidal" or m.time_mode == "fourier_learned":
+                prediction = self.model(delta_days, x_s2, y_s2)
+            elif m.time_mode == "mlp":
+                time_features = torch.stack([delta_days, doy_sin, doy_cos], dim=1)  # (B, 3)
+                prediction = self.model(time_features, x_s2, y_s2)
+
+            self.loss = self.lossfunction(prediction, s2data)
+
+        self.scaler.scale(self.loss).backward()
+        
+        # unscale before clipping
+        self.scaler.unscale_(self.optimizer)
         clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-
-        self.optimizer.step()
+        
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
         self.globalstep += 1
 
-        if self.globalstep % 10 == 0:
+        if self.globalstep % 10 == 0 and self.rank == 0:
             self.tb_writer.add_scalar("train/loss", self.loss.item(), self.globalstep)
         return
 
 
+    def _validate(self):
+
+
+        # evaluate data from old active windows
+        self.tracker.increment()
+        current_eval_cycle = self.tracker.n_steps - 1 # starts at one so set to zero
+        with torch.no_grad():
+            
+            pbar_val = tqdm(
+                total=len(self.plot_dataloader),
+                desc=f"EPOCH: {self.current_epoch}",
+                leave=False,
+                disable=(self.rank != 0),
+                dynamic_ncols=True,
+                position=1,
+            )
+            pbar_val.set_description("validation")
+            for batch_idx, batch in enumerate(self.plot_dataloader):
+                x_s2 = batch["x_s2"]
+                y_s2 = batch["y_s2"]
+                s2data = batch["s2data"]
+                time_idx = batch["time_idx"]
+                delta_days = batch["delta_days"]
+                doy_sin = batch["doy_sin"]
+                doy_cos = batch["doy_cos"]
+
+                x_s2 = x_s2.cuda(self.rank)
+                y_s2 = y_s2.cuda(self.rank)
+                s2data = s2data.cuda(self.rank)
+                time_idx = time_idx.cuda(self.rank)
+                delta_days = delta_days.cuda(self.rank)
+                doy_sin = doy_sin.cuda(self.rank)
+                doy_cos = doy_cos.cuda(self.rank)
+                m = self.model.module if hasattr(self.model, "module") else self.model
+
+                if m.time_mode == "index":
+                    pred = self.model(time_idx, x_s2, y_s2)
+                elif m.time_mode == "sinusoidal" or m.time_mode == "fourier_learned":
+                    pred = self.model(delta_days, x_s2, y_s2)
+                elif m.time_mode == "mlp":
+                    time_features = torch.stack([delta_days, doy_sin, doy_cos], dim=1)  # (B, 3)
+                    pred = self.model(time_features, x_s2, y_s2)
+                # contiguous tensors
+                prediction = pred.contiguous()
+                s2data = s2data.contiguous()
+                
+                self.tracker.update(prediction, s2data)
+                pbar_val.update(1)
+
+            pbar_val.close()   
+
+
+            results = self.tracker.compute_all()
+            if self.rank == 0:
+                for key, val in results.items():
+                    self.tb_writer.add_scalar(f"val/{key}", val[current_eval_cycle], global_step=self.globalstep)
+        return None
+    
     @abstractmethod
     def _plot(self,task:str="regression"):
+
+        # Only plot on main process in distributed mode
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            if torch.distributed.get_rank() != 0:
+                return None
+
         with torch.no_grad():
 
             for batch_idx, batch in enumerate(self.plot_dataloader):
+                x_s2 = batch["x_s2"]
+                y_s2 = batch["y_s2"]
+                s2data = batch["s2data"]
+                time_idx = batch["time_idx"]
+                delta_days = batch["delta_days"]
+                doy_sin = batch["doy_sin"]
+                doy_cos = batch["doy_cos"]
 
-                x_s2 = batch["x_s2"].cuda(self.rank)
-                y_s2 = batch["y_s2"].cuda(self.rank)
-                s2data = batch["s2data"].cuda(self.rank)
-                s2data_np =s2data.detach().cpu().numpy()
+                x_s2 = x_s2.cuda(self.rank)
+                y_s2 = y_s2.cuda(self.rank)
+                s2data = s2data.cuda(self.rank)
+                time_idx = time_idx.cuda(self.rank)
+                delta_days = delta_days.cuda(self.rank)
+                doy_sin = doy_sin.cuda(self.rank)
+                doy_cos = doy_cos.cuda(self.rank)
+
+                m = self.model.module if hasattr(self.model, "module") else self.model
+
+                if m.time_mode == "index":
+                    pred = self.model(time_idx, x_s2, y_s2)
+                elif m.time_mode == "sinusoidal" or m.time_mode == "fourier_learned":
+                    pred = self.model(delta_days, x_s2, y_s2)
+                elif m.time_mode == "mlp":
+                    time_features = torch.stack([delta_days, doy_sin, doy_cos], dim=1)  # (B, 3)
+                    pred = self.model(time_features, x_s2, y_s2)
+                
 
                 B = x_s2.size(0)  
-                T = 4  
 
-                predictions = []
-
-                for t in range(T):
-                    timestamp_batch = torch.full((B,), t, dtype=torch.long, device=f"cuda:{self.rank}")
-                    pred = self.model(timestamp_batch, x_s2, y_s2)
-                    predictions.append(pred)
-
-                predictions = torch.stack(predictions, dim=0).detach().cpu().numpy()  # (4, B, C, H, W)
+                predictions = pred.detach().float().cpu().numpy()  # (4, B, C, H, W)
 
                 for ijk in range(min(10, B)):
 
-                    s2_img_predicted_0 = predictions[0, ijk]
-                    s2_img_predicted_1 = predictions[1, ijk]
-                    s2_img_predicted_2 = predictions[2, ijk]
-                    s2_img_predicted_3 = predictions[3, ijk]
+                    s2_img_predicted = predictions[ijk]
+                    fig, ax = plt.subplots(1,2, figsize=(15, 10))
 
-                    s2data_0_np = s2data_np[ijk, 0]  # winter
-                    s2data_1_np = s2data_np[ijk, 1]  # spring
-                    s2data_2_np = s2data_np[ijk, 2]  # summer
-                    s2data_3_np = s2data_np[ijk, 3]  # autumn
-
-                    fig, ax = plt.subplots(2, 4, figsize=(15, 10))
-
-                    ax[0, 0].imshow(s2_to_rgb(s2data_0_np))
-                    ax[0, 0].set_title(f"GTWinter")
-                    ax[0, 1].imshow(s2_to_rgb(s2data_1_np))
-                    ax[0, 1].set_title(f"GTSpring")
-                    ax[0, 2].imshow(s2_to_rgb(s2data_2_np))
-                    ax[0, 2].set_title(f"GTSummer")
-                    ax[0, 3].imshow(s2_to_rgb(s2data_3_np))
-                    ax[0, 3].set_title(f"GTAutumn")
-                    ax[1, 0].imshow(s2_to_rgb(s2_img_predicted_0))
-                    ax[1, 0].set_title(f"PredWinter")
-                    ax[1, 1].imshow(s2_to_rgb(s2_img_predicted_1))
-                    ax[1, 1].set_title(f"PredSpring")
-                    ax[1, 2].imshow(s2_to_rgb(s2_img_predicted_2))
-                    ax[1, 2].set_title(f"PredSummer")
-                    ax[1, 3].imshow(s2_to_rgb(s2_img_predicted_3))
-                    ax[1, 3].set_title(f"PredAutumn")
+                    gt_np = s2data[ijk].detach().float().cpu().numpy()
+                    ax[0].imshow(s2_to_rgb(gt_np))
+                    ax[0].set_title(f"GT")
+                    ax[1].imshow(s2_to_rgb(s2_img_predicted))
+                    ax[1].set_title(f"predicted")
                     for a in ax.flatten():
                         a.axis("off")
 
@@ -209,11 +304,11 @@ class LIANetTrainer:
             outputloc =  os.path.join(self.paths.checkpoint_dir,f"checkpoint_Epoch{self.current_epoch}_Iteration{self.globalstep}.pt")
         else:                               
             outputloc = os.path.join(self.paths.checkpoint_dir,f"{name_overwrite}.pt")
-
+        model_to_save = self.model.module if hasattr(self.model, "module") else self.model
         torch.save({
             'epoch': self.current_epoch,
             'global_step': self.globalstep,
-            'model_state_dict': self.model.state_dict(),
+            'model_state_dict': model_to_save.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'loss': self.loss,
             },
@@ -224,7 +319,6 @@ class LIANetTrainer:
     def finalize(self):
 
         self.tb_writer.close()
-        
         self._save_checkpoint()
         
         return None
