@@ -9,6 +9,7 @@ from datetime import datetime
 from utils import _preprocess_S2
 import math
 
+
 class LIANetPretrainingDataset(Dataset):
     def __init__(self, iterations_per_epoch, topdir_dataset, image_size, 
                  complete_tile_size, tile_names):
@@ -23,6 +24,11 @@ class LIANetPretrainingDataset(Dataset):
             tile_dir = os.path.join(self.topdir_dataset, tile_name)
             tif_files = os.listdir(tile_dir)
             self.tiles[tile_name] = tif_files
+
+
+        self.overlap_x = 984 # overlap on the x direction between two adjacent tiles in the mosaic
+        self.single_tile_width = 10980
+        self.mosaic_width = self.single_tile_width + (self.single_tile_width - self.overlap_x)  # 10980 + 9996 = 20976
 
     @property
     def _epoch(self) -> int:
@@ -60,8 +66,11 @@ class LIANetPretrainingDataset(Dataset):
         tile_idx = np.random.randint(0, len(self.tile_names_list)) #TODO: add weights based on number of files per tile
         tile_name = self.tile_names_list[tile_idx]
         # excluding 2024 from training set and selecting a random time index from the rest 
+        # valid_tiles = [f for f in self.tiles[tile_name] 
+        #     if f.endswith(".tif") and not f.startswith("2024")
+        # ]
         valid_tiles = [f for f in self.tiles[tile_name] 
-            if f.endswith(".tif") and not f.startswith("2024")
+            if f.endswith(".tif")
         ]
         time_idx = np.random.randint(0, len(valid_tiles))
         dt_properties = self._get_dt_properties(time_idx, valid_tiles)
@@ -69,8 +78,8 @@ class LIANetPretrainingDataset(Dataset):
         # select a random spatial location
         x0, y0 = self._rand_xy()
         # Use it in image space
-        x0_img = 10980 - self.image_size if x0 > 10980 - self.image_size else x0
-        y0_img = 10980 - self.image_size if y0 > 10980 - self.image_size else y0
+        x0_img = self.single_tile_width - self.image_size if x0 > self.single_tile_width - self.image_size else x0
+        y0_img = self.single_tile_width - self.image_size if y0 > self.single_tile_width - self.image_size else y0
         window = rio.windows.Window(col_off=x0_img, row_off=y0_img,
                                     width=self.image_size, height=self.image_size)
         s2_path = glob.glob(os.path.join(self.topdir_dataset, tile_name ,f"{dt_properties['file_name']}"))
@@ -80,13 +89,13 @@ class LIANetPretrainingDataset(Dataset):
             patch = src.read(window=window)
         patch = _preprocess_S2(patch)
 
-        # USe random pints in latent space
-        x0_latent = (tile_idx) * 10980   + x0 - 984 # 984 is the overlap area of two tiles in x direction
-        y0_latent = y0
-        if x0_latent > 20976-self.image_size: # The most right boarder condition
-            x0_latent = 20976 - self.image_size  # the maximum it can have
-        if y0_latent > 10980 - self.image_size: # The most bottom boarder condition
-            y0_latent = 10980 - self.image_size  # the maximum it can have
+        x_offset = tile_idx * (self.single_tile_width - self.overlap_x)  # 0 for first tile, 9996 for second
+        x0_latent = x_offset + x0_img
+        y0_latent = y0_img
+
+        # clamp so the whole patch stays inside mosaic
+        x0_latent = min(x0_latent, self.mosaic_width - self.image_size)
+        y0_latent = min(y0_latent, self.single_tile_width - self.image_size)
 
         return {
             "delta_days": torch.tensor(dt_properties["delta_days"], dtype=torch.float32),
@@ -112,8 +121,11 @@ class LIANetPretrainingPlotterDataset(LIANetPretrainingDataset):
         tile_idx = np.random.randint(0, len(self.tile_names_list)) #TODO: add weights based on number of files per tile
         tile_name = self.tile_names_list[tile_idx]
         # excluding 2024 from training set and selecting a random time index from the rest 
+        # valid_tiles = [f for f in self.tiles[tile_name] 
+        #     if f.endswith(".tif") and f.startswith("2024")
+        # ]
         valid_tiles = [f for f in self.tiles[tile_name] 
-            if f.endswith(".tif") and f.startswith("2024")
+            if f.endswith(".tif")
         ]
         time_idx = np.random.randint(0, len(valid_tiles))
         dt_properties = self._get_dt_properties(time_idx, valid_tiles)
@@ -132,18 +144,18 @@ class LIANetPretrainingPlotterDataset(LIANetPretrainingDataset):
             patch = src.read(window=window)
         patch = _preprocess_S2(patch)
 
-        # USe random pints in latent space
-        x0_latent = (tile_idx) * 10980   + x0 - 984 # 984 is the overlap area of two tiles in x direction
-        y0_latent = y0
-        if x0_latent > 20976-self.image_size: # The most right boarder condition
-            x0_latent = 20976 - self.image_size  # the maximum it can have
-        if y0_latent > 10980 - self.image_size: # The most bottom boarder condition
-            y0_latent = 10980 - self.image_size  # the maximum it can have
+        x_offset = tile_idx * (self.single_tile_width - self.overlap_x)  # 0 for first tile, 9996 for second
+        x0_latent = x_offset + x0_img
+        y0_latent = y0_img
 
+        # clamp so the whole patch stays inside mosaic
+        x0_latent = min(x0_latent, self.mosaic_width - self.image_size)
+        y0_latent = min(y0_latent, self.single_tile_width - self.image_size)
 
         return {
             "delta_days": torch.tensor(dt_properties["delta_days"], dtype=torch.float32),
             "time_idx": torch.tensor(time_idx, dtype=torch.int32),
+            "date_str": valid_tiles[time_idx],
             "doy_sin": torch.tensor(dt_properties["doy_sin"], dtype=torch.float32),
             "doy_cos": torch.tensor(dt_properties["doy_cos"], dtype=torch.float32),
             "x_s2": x0_latent,

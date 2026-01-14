@@ -455,7 +455,7 @@ class LIANetLight(nn.Module):
             self.preproj = nn.Identity()
             resunet_in = enc_ch
 
-
+        # self.light_head = ResUNet(in_channels=resunet_in, encoder_type="resnet50", decoder_size="default", n_res_blocks=3)
         self.light_head = LiteCNNHead(in_ch=resunet_in, out_ch=128, hidden=256, n_blocks=2)
         num_channels_last_layer = 128
 

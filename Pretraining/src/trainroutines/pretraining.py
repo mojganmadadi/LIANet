@@ -250,6 +250,7 @@ class LIANetTrainer:
                 y_s2 = batch["y_s2"]
                 s2data = batch["s2data"]
                 time_idx = batch["time_idx"]
+                date_str = batch["date_str"]
                 delta_days = batch["delta_days"]
                 doy_sin = batch["doy_sin"]
                 doy_cos = batch["doy_cos"]
@@ -284,7 +285,7 @@ class LIANetTrainer:
 
                     gt_np = s2data[ijk].detach().float().cpu().numpy()
                     ax[0].imshow(s2_to_rgb(gt_np))
-                    ax[0].set_title(f"GT")
+                    ax[0].set_title(f"GT x:{x_s2[ijk]} y:{y_s2[ijk]} t:{date_str[ijk]}")
                     ax[1].imshow(s2_to_rgb(s2_img_predicted))
                     ax[1].set_title(f"predicted")
                     for a in ax.flatten():
@@ -304,7 +305,12 @@ class LIANetTrainer:
             outputloc =  os.path.join(self.paths.checkpoint_dir,f"checkpoint_Epoch{self.current_epoch}_Iteration{self.globalstep}.pt")
         else:                               
             outputloc = os.path.join(self.paths.checkpoint_dir,f"{name_overwrite}.pt")
-        model_to_save = self.model.module if hasattr(self.model, "module") else self.model
+        # model_to_save = self.model.module if hasattr(self.model, "module") else self.model
+        model_to_save = self.model
+        if hasattr(model_to_save, "module"):      # DDP
+            model_to_save = model_to_save.module
+        if hasattr(model_to_save, "_orig_mod"):   # torch.compile wrapper
+            model_to_save = model_to_save._orig_mod
         torch.save({
             'epoch': self.current_epoch,
             'global_step': self.globalstep,
