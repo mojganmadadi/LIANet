@@ -15,6 +15,7 @@ class HashTableEncoder2D(nn.Module):
                  growth: float,
                  table_size: int,
                  feat_dim: int,
+                 vectorized: bool = True,
                  table_dtype=torch.float32):
         super().__init__()
         self.levels = int(levels)
@@ -22,6 +23,7 @@ class HashTableEncoder2D(nn.Module):
         self.growth = float(growth)
         self.table_size = int(table_size)
         self.feat_dim = int(feat_dim)
+        self.vectorized = bool(vectorized)
 
         tables = torch.empty(self.table_size, self.feat_dim, dtype=table_dtype)
         nn.init.uniform_(tables, a=-1e-2, b=1e-2)
@@ -43,7 +45,8 @@ class HashTableEncoder2D(nn.Module):
         # Resolution per level (progressively growing grid size)
         Ns = torch.tensor([int(round(self.n_min * (self.growth ** l)))
                            for l in range(self.levels)], dtype=torch.int64)
-        self.register_buffer("level_N", Ns, persistent=False)
+        # self.register_buffer("level_N", Ns, persistent=False)
+        self.register_buffer("level_N_f", Ns.to(torch.float32), persistent=False)
         self.out_dim = self.levels * self.feat_dim
         self._base_xx = None
         self._base_yy = None
@@ -148,71 +151,86 @@ class HashTableEncoder2D(nn.Module):
         # --- base grid (cached) ---
         xx, yy = self._get_base_grid(H, device)          # [H, W] float32
         # shift by crop origin
-        px = xx.unsqueeze(0) + x0.to(torch.float32).view(B, 1, 1)  # [B, H, W]
-        py = yy.unsqueeze(0) + y0.to(torch.float32).view(B, 1, 1)  # [B, H, W]
-
+        # px = xx.unsqueeze(0) + x0.to(torch.float32).view(B, 1, 1)  # [B, H, W]
+        # py = yy.unsqueeze(0) + y0.to(torch.float32).view(B, 1, 1)  # [B, H, W]
+        px = xx.unsqueeze(0) + x0.view(B, 1, 1)
+        py = yy.unsqueeze(0) + y0.view(B, 1, 1)
+        
         N = H * W
         pxf = px.reshape(B, N)  # [B, N]
         pyf = py.reshape(B, N)  # [B, N]
 
         # --- scales per level: [L] float32 ---
-        # level_N is int64 buffer; keep it on device, cast to float
         # scale = Nl / complete_tile_size
-        scales = (self.level_N.to(device=device, dtype=torch.float32) / float(complete_tile_size))  # [L]
-
-        # --- broadcast coords to [B, L, N] ---
-        # xyn_x[b,l,n] = pxf[b,n] * scales[l]
-        xyn_x = pxf[:, None, :] * scales[None, :, None]  # [B, L, N]
-        xyn_y = pyf[:, None, :] * scales[None, :, None]  # [B, L, N]
-
-        # integer/fractional parts
-        ix0 = torch.floor(xyn_x).to(torch.int64)  # [B, L, N]
-        iy0 = torch.floor(xyn_y).to(torch.int64)  # [B, L, N]
-        ix1 = ix0 + 1
-        iy1 = iy0 + 1
-
-        fx = (xyn_x - ix0.to(torch.float32)).unsqueeze(-1)  # [B, L, N, 1]
-        fy = (xyn_y - iy0.to(torch.float32)).unsqueeze(-1)  # [B, L, N, 1]
-
-        # --- seeds per level, broadcast to [B, L, N] (no expand views stored) ---
-        # _fast_hash_2d likely expects seed that can broadcast with ix/iy.
-        seed = self.seeds.to(device=device)  # [L] int64
-        seed_bln = seed[None, :, None].expand(B, L, N)  # [B, L, N]
-
-        # flatten everything to 1D for hashing + indexing
-        ix0f = ix0.reshape(-1)
-        iy0f = iy0.reshape(-1)
-        ix1f = ix1.reshape(-1)
-        iy1f = iy1.reshape(-1)
-        seedf = seed_bln.reshape(-1)
-
-        # hash indices (flattened): [B*L*N]
-        idx00 = _fast_hash_2d(ix0f, iy0f, seedf, self.table_size)
-        idx10 = _fast_hash_2d(ix1f, iy0f, seedf, self.table_size)
-        idx01 = _fast_hash_2d(ix0f, iy1f, seedf, self.table_size)
-        idx11 = _fast_hash_2d(ix1f, iy1f, seedf, self.table_size)
+        scales = (self.level_N_f / float(complete_tile_size))  # [L]
 
         TL = self.tables  # [T, F]
 
-        # gather features: [BLN, F]
-        f00 = TL[idx00]
-        f10 = TL[idx10]
-        f01 = TL[idx01]
-        f11 = TL[idx11]
+        if self.vectorized:
+            # --- broadcast coords to [B, L, N] ---
+            # xyn_x[b,l,n] = pxf[b,n] * scales[l]
+            xyn_x = pxf[:, None, :] * scales[None, :, None]  # [B, L, N]
+            xyn_y = pyf[:, None, :] * scales[None, :, None]  # [B, L, N]
 
-        # reshape weights to match gathered features
-        fx_f = fx.reshape(-1, 1)  # [BLN, 1]
-        fy_f = fy.reshape(-1, 1)  # [BLN, 1]
+            # integer/fractional parts
+            ix0 = torch.floor(xyn_x).to(torch.int64)  # [B, L, N]
+            iy0 = torch.floor(xyn_y).to(torch.int64)  # [B, L, N]
+            ix1 = ix0 + 1
+            iy1 = iy0 + 1
 
-        w00 = (1.0 - fx_f) * (1.0 - fy_f)
-        w10 = fx_f * (1.0 - fy_f)
-        w01 = (1.0 - fx_f) * fy_f
-        w11 = fx_f * fy_f
+            # --- seeds per level, broadcast to [B, L, N] ---
+            seed_bln = self.seeds[None, :, None].expand(B, L, N)  # [B, L, N]
 
-        enc_flat = (w00 * f00 + w10 * f10 + w01 * f01 + w11 * f11)  # [BLN, F]
+            # flatten everything to 1D for hashing + indexing
+            ix0f = ix0.reshape(-1)
+            iy0f = iy0.reshape(-1)
+            ix1f = ix1.reshape(-1)
+            iy1f = iy1.reshape(-1)
+            seedf = seed_bln.reshape(-1)
 
-        # unflatten back to [B, L, N, F]
-        enc = enc_flat.view(B, L, N, F)
+            # hash indices (flattened): [B*L*N]
+            idx00 = _fast_hash_2d(ix0f, iy0f, seedf, self.table_size)
+            idx10 = _fast_hash_2d(ix1f, iy0f, seedf, self.table_size)
+            idx01 = _fast_hash_2d(ix0f, iy1f, seedf, self.table_size)
+            idx11 = _fast_hash_2d(ix1f, iy1f, seedf, self.table_size)
+
+            # gather features: [BLN, F]
+            f00 = TL[idx00]
+            f10 = TL[idx10]
+            f01 = TL[idx01]
+            f11 = TL[idx11]
+
+            # average 4 corners (no bilinear weighting)
+            enc_flat = 0.25 * (f00 + f10 + f01 + f11)  # [BLN, F]
+
+            # unflatten back to [B, L, N, F]
+            enc = enc_flat.view(B, L, N, F)
+        else:
+            feats = []
+            for l in range(L):
+                scale = scales[l]
+                xyn_x = pxf * scale  # [B, N]
+                xyn_y = pyf * scale  # [B, N]
+
+                ix0 = torch.floor(xyn_x).to(torch.int64)
+                iy0 = torch.floor(xyn_y).to(torch.int64)
+                ix1 = ix0 + 1
+                iy1 = iy0 + 1
+
+                seed_l = self.seeds[l]
+                idx00 = _fast_hash_2d(ix0, iy0, seed_l, self.table_size)
+                idx10 = _fast_hash_2d(ix1, iy0, seed_l, self.table_size)
+                idx01 = _fast_hash_2d(ix0, iy1, seed_l, self.table_size)
+                idx11 = _fast_hash_2d(ix1, iy1, seed_l, self.table_size)
+
+                f00 = TL[idx00]
+                f10 = TL[idx10]
+                f01 = TL[idx01]
+                f11 = TL[idx11]
+                feats.append(0.25 * (f00 + f10 + f01 + f11))  # [B, N, F]
+
+            enc = torch.cat(feats, dim=-1)
+            enc = enc.view(B, N, L, F)
 
         # reorder to [B, N, L*F]
         enc = enc.permute(0, 2, 1, 3).contiguous().view(B, N, L * F)
@@ -392,12 +410,11 @@ class LIANetLight(nn.Module):
                  table_size: int,
                  feat_dim: int,
                  complete_tile_size: int,
-                 # ResUNet params
-                 resunet_backbone_size: str,
-                 bilinear: bool,
-                 # output config
                  out_channels: int,
                  preproj_channels: int | None, 
+                 resunet_backbone_size: str = "small",
+                 bilinear: bool = True,
+                 hash_vectorized: bool = True,
                  final_activation: str = None):
         super().__init__()
 
@@ -406,7 +423,8 @@ class LIANetLight(nn.Module):
 
         self.encoder = HashTableEncoder2D(
             levels=levels, n_min=n_min, growth=growth,
-            table_size=table_size, feat_dim=feat_dim, table_dtype=torch.float32
+            table_size=table_size, feat_dim=feat_dim, vectorized=hash_vectorized,
+            table_dtype=torch.float32
         )
         enc_ch = self.encoder.out_dim  # = levels * feat_dim
         # Learnable temporal embedding (discrete timestamps)
@@ -456,7 +474,7 @@ class LIANetLight(nn.Module):
             resunet_in = enc_ch
 
         # self.light_head = ResUNet(in_channels=resunet_in, encoder_type="resnet50", decoder_size="default", n_res_blocks=3)
-        self.light_head = LiteCNNHead(in_ch=resunet_in, out_ch=128, hidden=256, n_blocks=2)
+        self.light_head = LiteCNNHead(in_ch=resunet_in, out_ch=128, hidden=256, n_blocks=3)
         num_channels_last_layer = 128
 
         self.final_layer = nn.Sequential(

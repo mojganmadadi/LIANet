@@ -140,13 +140,13 @@ class LIANetTrainer:
         doy_sin = batch["doy_sin"]
         doy_cos = batch["doy_cos"]
 
-        x_s2 = x_s2.cuda(self.rank)
-        y_s2 = y_s2.cuda(self.rank)
-        s2data = s2data.cuda(self.rank)
-        time_idx = time_idx.cuda(self.rank)
-        delta_days = delta_days.cuda(self.rank)
-        doy_sin = doy_sin.cuda(self.rank)
-        doy_cos = doy_cos.cuda(self.rank)
+        x_s2 = x_s2.to(self.rank, non_blocking=True).float()
+        y_s2 = y_s2.to(self.rank, non_blocking=True).float()
+        s2data = s2data.to(self.rank, non_blocking=True)
+        time_idx = time_idx.to(self.rank, non_blocking=True)
+        delta_days = delta_days.to(self.rank, non_blocking=True)
+        doy_sin = doy_sin.to(self.rank, non_blocking=True)
+        doy_cos = doy_cos.to(self.rank, non_blocking=True)
 
         self.optimizer.zero_grad(set_to_none=True)
         with torch.cuda.amp.autocast(enabled=self.use_amp, dtype=torch.float16):
@@ -203,13 +203,13 @@ class LIANetTrainer:
                 doy_sin = batch["doy_sin"]
                 doy_cos = batch["doy_cos"]
 
-                x_s2 = x_s2.cuda(self.rank)
-                y_s2 = y_s2.cuda(self.rank)
-                s2data = s2data.cuda(self.rank)
-                time_idx = time_idx.cuda(self.rank)
-                delta_days = delta_days.cuda(self.rank)
-                doy_sin = doy_sin.cuda(self.rank)
-                doy_cos = doy_cos.cuda(self.rank)
+                x_s2 = x_s2.to(self.rank, non_blocking=True).float()
+                y_s2 = y_s2.to(self.rank, non_blocking=True).float()
+                s2data = s2data.to(self.rank, non_blocking=True)
+                time_idx = time_idx.to(self.rank, non_blocking=True)
+                delta_days = delta_days.to(self.rank, non_blocking=True)
+                doy_sin = doy_sin.to(self.rank, non_blocking=True)
+                doy_cos = doy_cos.to(self.rank, non_blocking=True)
                 m = self.model.module if hasattr(self.model, "module") else self.model
 
                 if m.time_mode == "index":
@@ -255,13 +255,13 @@ class LIANetTrainer:
                 doy_sin = batch["doy_sin"]
                 doy_cos = batch["doy_cos"]
 
-                x_s2 = x_s2.cuda(self.rank)
-                y_s2 = y_s2.cuda(self.rank)
-                s2data = s2data.cuda(self.rank)
-                time_idx = time_idx.cuda(self.rank)
-                delta_days = delta_days.cuda(self.rank)
-                doy_sin = doy_sin.cuda(self.rank)
-                doy_cos = doy_cos.cuda(self.rank)
+                x_s2 = x_s2.to(self.rank, non_blocking=True).float()
+                y_s2 = y_s2.to(self.rank, non_blocking=True).float()
+                s2data = s2data.to(self.rank, non_blocking=True)
+                time_idx = time_idx.to(self.rank, non_blocking=True)
+                delta_days = delta_days.to(self.rank, non_blocking=True)
+                doy_sin = doy_sin.to(self.rank, non_blocking=True)
+                doy_cos = doy_cos.to(self.rank, non_blocking=True)
 
                 m = self.model.module if hasattr(self.model, "module") else self.model
 
