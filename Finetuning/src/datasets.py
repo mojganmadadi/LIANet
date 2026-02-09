@@ -3,6 +3,8 @@ from torch.utils.data import Dataset
 import os
 from tqdm import tqdm 
 import numpy as np
+from datetime import datetime
+import math
 
 import rasterio
 from rasterio.windows import Window
@@ -433,7 +435,7 @@ class BuildingBinaryRaster(Dataset):
         self.buffer = buffer
 
         locations = get_sample_locations(
-            complete_tile_size, 
+            10980, 
             tb=training_bounds_left_top_right_bottom, 
             train_val_key=self.train_val_key,
             patch_size=patch_size,
@@ -441,29 +443,100 @@ class BuildingBinaryRaster(Dataset):
             )
 
 
+        # self.samples = []
+        # for loc in tqdm(locations, desc=f"Building {train_val_key} samples"):
+        #     for sample_idx, time_str in enumerate(s2_tiles):
+        #         # print(time_str)
+        #         if "BF" not in time_str:
+        #             self.samples.append({
+        #                 "sample_idx": int(sample_idx),
+        #                 "time_str": time_str,
+        #                 "location": loc
+        #             })
+        #         else: continue
+
+        self.min_building_frac = 0.1  # 1%
+        self.win_size = 160            # the "big" window before 128 crop
+        self.scale = 4                 # label resolution is 4x finer than S2 grid
+
+        # --- replace your current self.samples building loop with this ---
         self.samples = []
-        for loc in tqdm(locations, desc=f"Building {train_val_key} samples"):
-            for season_index, _ in enumerate(s2_tiles):
-                self.samples.append({
-                    "season_index": int(season_index),
-                    "location": loc
-                })
+        kept_locs = 0
+        skipped_locs = 0
+
+        # Open label raster once (much faster than opening for every loc)
+        with rasterio.open(os.path.join(self.top_dir, self.labels)) as src_lbl:
+            for loc in tqdm(locations, desc=f"Building {train_val_key} samples"):
+
+                # read label window corresponding to the 160x160 S2 window (scaled to label gsd)
+                win_lbl = Window(loc[1] * self.scale, loc[0] * self.scale,
+                                self.win_size * self.scale, self.win_size * self.scale)
+
+                lbl = src_lbl.read(1, window=win_lbl)
+
+                # Compute building fraction in this window.
+                # If lbl is {0,1} (or {0,255}), adapt accordingly:
+                if lbl.dtype != np.bool_:
+                    # Common cases:
+                    # - 0/1 integer mask: mean gives fraction
+                    # - 0/255 uint8 mask: (lbl > 0).mean gives fraction
+                    building_frac = (lbl > 0).mean()
+                else:
+                    building_frac = lbl.mean()
+
+                if building_frac <= self.min_building_frac:
+                    skipped_locs += 1
+                    continue
+
+                kept_locs += 1
+
+                # Only now expand across time / seasons
+                for sample_idx, time_str in enumerate(s2_tiles):
+                    if "BF" in time_str:
+                        continue
+                    self.samples.append({
+                        "sample_idx": int(sample_idx),
+                        "time_str": time_str,
+                        "location": loc,
+                        "building_frac_160": float(building_frac),  # optional, helpful for debugging
+                    })
+
+        np.random.shuffle(self.samples)
+        print(f"Kept {kept_locs}/{kept_locs + skipped_locs} locations with >{int(self.min_building_frac*100)}% buildings")
+        print(f"{len(self.samples)} {train_val_key} samples after exclusion + building filter")
 
         np.random.shuffle(self.samples)
         print(f"{len(self.samples)} {train_val_key} samples after exclusion")
+
+    def _get_dt_properties(self, time_str):
+
+        capture_time = os.path.splitext(os.path.basename(time_str))[0]
+        dt = datetime.strptime(capture_time, "%Y%m%dT%H%M%S")
+
+        t0 = datetime(2015, 1, 1)
+        delta = (dt - t0).total_seconds() / 86400.0  # days since t0
+
+        # day-of-year
+        doy = dt.timetuple().tm_yday  # 1..365/366
+        doy_norm = (doy - 1) / 365.0
+        doy_sin = math.sin(2 * math.pi * doy_norm)
+        doy_cos = math.cos(2 * math.pi * doy_norm)
+
+        return {"file_name": time_str,"delta_days": delta, "doy_sin": doy_sin, "doy_cos": doy_cos,}
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
         s = self.samples[idx]
+        dt_properties = self._get_dt_properties(s["time_str"])
         if self.train_val_key == "val":
             y_off, x_off = 16, 16
         else:
             y_off = np.random.randint(0, self.buffer + 1)
             x_off = np.random.randint(0, self.buffer + 1)
 
-        s2_path = os.path.join(self.top_dir, self.s2_tiles[s["season_index"]])
+        s2_path = os.path.join(self.top_dir, self.s2_tiles[s["sample_idx"]])
         # ---- Read Sentinel-2 raster window & crop ----
         img = read_and_normalize_s2(
             s2_path,
@@ -480,12 +553,15 @@ class BuildingBinaryRaster(Dataset):
             win = Window(s["location"][1]*4, s["location"][0]*4, 160*4, 160*4)
             label = src.read(1, window=win)
             label = label[y_off*4:y_off*4 + self.patch_size*4, x_off*4:x_off*4 + self.patch_size*4]
-        label = torch.from_numpy(label).long()  # (128,128) {0.0, 1.0}
+            label = (label > 0).astype(np.int64)  # (512,512) {0.0, 1.0}
 
         return {
-            "timestamp": s["season_index"],
+            "timestamp": torch.tensor(dt_properties["delta_days"], dtype=torch.float32),
+            "time_str": s["time_str"],
             "x_s2": x_off + s["location"][1],
             "y_s2": y_off + s["location"][0],
             "s2data": img,
-            "label": label
+            "label": torch.tensor(label, dtype=torch.int64)
         }
+
+

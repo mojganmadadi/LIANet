@@ -19,17 +19,18 @@ task: building_footprints_binary # choices: [dynamic_world, meta_canopy_height, 
 model_type: replace_final_block_4x
 checkpoint_area: "5k_small"      # choices: ["5k", "7k", "10k"] correesponding to A0, A+, and A++ respectively. small and large correspond to different model sizes.
 
-train_area_bounds: [4000, 0, 5000, 5000]
+train_area_bounds: [2000, 0, 10000, 10000]
 
-logging_directory: /home/user/finetuning_results
+logging_directory: /home/user/results_shared
 
 # deep learning related
 lossfunction: cross_entropy
 batchsize: 32
-learningrate: 0.001
+learningrate: 0.000001
 num_workers: 8
 epochs: 50
-warmup_epochs: 3
+warmup_epochs: 0
 gpu_id: 1
 validate_every_n_epochs: 1
-plot_every_n_epochs: 5
+plot_every_n_epochs: 2
+weightedSegmentation: False

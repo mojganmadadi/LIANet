@@ -1,10 +1,11 @@
+from cProfile import label
 from hydra import main
 from omegaconf import DictConfig
 from omegaconf import OmegaConf
-
+from utils import dice_loss_with_logits
 from settings import * 
 
-@main(config_path="configs", config_name="BF_reg_LIANet")
+@main(config_path="configs", config_name="BF_clas_LIANet")
 def main_cfg(args: DictConfig):
     # only one visible device
     import os
@@ -187,12 +188,14 @@ def main_cfg(args: DictConfig):
     )
 
     validation_dataloader = torch.utils.data.DataLoader(
-        val_ds,
-        batch_size=args.batchsize,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=True,
-    )   
+    val_ds,
+    batch_size=args.batchsize,
+    shuffle=False,
+    num_workers=args.num_workers,
+    pin_memory=True,
+    persistent_workers=True if args.num_workers > 0 else False,
+    prefetch_factor=16 if args.num_workers > 0 else None,
+    )  
 
     # ================= BUILD MODEL =================
 
@@ -263,6 +266,8 @@ def main_cfg(args: DictConfig):
             raise ValueError("Huber loss can only be used for regression tasks")
     elif args.lossfunction == "cross_entropy":  
         if args.weightedSegmentation == False:
+            # bce = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([5.0], device='cuda'))
+
             criterion = torch.nn.CrossEntropyLoss()
         else:
             class_weights = weights[args.task]
@@ -356,8 +361,10 @@ def main_cfg(args: DictConfig):
             _ , outputs, label = forward_model(model, args.model_type, batch)
 
             # ANYWAYS: comput loss and backprop 
-            train_loss = criterion(outputs, label)
+            # train_loss = bce(outputs, label.float()) + dice_loss_with_logits(outputs, label)
+            train_loss = criterion(outputs.float(), label)
             train_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             
             # logging
@@ -366,7 +373,7 @@ def main_cfg(args: DictConfig):
 
         # Step LR Scheduler
         writer.add_scalar("train/learning_rate", scheduler.get_last_lr()[0], epoch)
-        scheduler.step()
+        # scheduler.step()
 
         # =================================================
         # VALIDATION
@@ -435,17 +442,20 @@ def main_cfg(args: DictConfig):
                     if args.model_type in ["unet", "micro_unet"]:
                         reconstruction = torch.zeros_like(batch["s2data"])
                         
-                    s2_image = batch["s2data"].cpu().numpy()
-                    reconstruction = reconstruction.detach().cpu().numpy()
+                    s2_image = batch["s2data"].detach().cpu().numpy().astype(np.float32)
+                    reconstruction = reconstruction.detach().cpu().numpy().astype(np.float32)
                     outputs = outputs.detach().cpu().numpy()
                     label = label.detach().cpu().numpy()
 
                     fig, axs = plt.subplots(1, 4, figsize=(15, 5))
 
-                    axs[0].imshow(s2_to_rgb(s2_image[0]))
+
+                    rgb0 = s2_to_rgb(s2_image[0]).astype(np.float32)
+                    rgb1 = s2_to_rgb(reconstruction[0]).astype(np.float32)
+                    axs[0].imshow(rgb0)
                     axs[0].set_title("Input")
 
-                    axs[1].imshow(s2_to_rgb(reconstruction[0]))
+                    axs[1].imshow(rgb1)
                     axs[1].set_title("Reconstruction")
     
                     if TASK_TYPE == "regression":
@@ -457,14 +467,22 @@ def main_cfg(args: DictConfig):
                         axs[3].set_title("Label")
 
                     else:
-                        pred_argmax = np.argmax(outputs,axis=1)
+                        pred_argmax = np.argmax(outputs, axis=1).astype(np.uint8)
+                        label_to_plot = label.astype(np.uint8)
+
                         axs[2].imshow(pred_argmax[0], cmap=cmap, vmin=vvmin, vmax=vvmax)
                         axs[2].set_title("Outputs")
-
-                        axs[3].imshow(label[0], cmap=cmap, vmin=vvmin, vmax=vvmax)
+                        axs[3].imshow(label_to_plot[0], cmap=cmap, vmin=vvmin, vmax=vvmax)
                         axs[3].set_title("Label")
 
                     plt.tight_layout()
+                    # print(
+                    #     "dtypes:",
+                    #     "rgb_in", rgb0.dtype,
+                    #     "rgb_rec", rgb1.dtype,
+                    #     "pred", (pred_argmax.dtype if TASK_TYPE!="regression" else outputs.dtype),
+                    #     "label", (label_to_plot.dtype if TASK_TYPE!="regression" else label.dtype),
+                    #     )
                     writer.add_figure(f"val/visualization_{counter}", fig, epoch)
                     #plt.savefig("test.png")
                     plt.close()
