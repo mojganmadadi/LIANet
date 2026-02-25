@@ -6,12 +6,19 @@ import os
 from models.utils import group_norm
 import omegaconf, hydra
 
+def _load_checkpoint_state_dict(checkpoint_path: str) -> dict:
+    ckpt = torch.load(checkpoint_path, map_location="cpu")
+    sd = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
+    if sd and all(k.startswith("module.") for k in sd.keys()):
+        sd = {k[len("module."):]: v for k, v in sd.items()}
+    return sd
+
 class DownstreamModel(nn.Module):
     def __init__(
         self,
         model_path: str,
         checkpoint_path_relative: str,
-        adaption_strategy: Literal['replace_final_block', "replace_final_block_4x"],
+        adaption_strategy: Literal['replace_final_block', "replace_final_block_4x", "replace_final_block_10meter_to_30meter"],
         num_classes: int = None,  # default None (required for regression)
         activation: Literal['none', 'relu'] = 'none',
         # NEW: head capacity knobs
@@ -35,7 +42,7 @@ class DownstreamModel(nn.Module):
         sd = ckpt["model_state_dict"]
         if all(k.startswith("module.") for k in sd.keys()):
             sd = {k[len("module."):]: v for k, v in sd.items()}
-        self.generator.load_state_dict(sd, strict=True)
+        self.generator.load_state_dict(sd, strict=False)
 
         # -------------------------
         # Check ResUNet structure
@@ -159,7 +166,6 @@ class DownstreamModel(nn.Module):
                 # ---- classifier ----
                 nn.Conv2d(trunk_out_ch // 4, num_classes, kernel_size=3, padding=1),
             )
-
         else:
             raise ValueError(f"Unknown adaption_strategy: {adaption_strategy}")
 

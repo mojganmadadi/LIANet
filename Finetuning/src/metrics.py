@@ -9,7 +9,7 @@ from torchmetrics.regression import MeanAbsoluteError, MeanSquaredError
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 
 
-def multiclass_segmentation_metrics(num_classes: int):
+def multiclass_segmentation_metrics(num_classes: int, ignore_index: int = None):
     """
     Returns a comprehensive set of metrics for multiclass segmentation,
     including both macro and micro averaged variants.
@@ -17,18 +17,18 @@ def multiclass_segmentation_metrics(num_classes: int):
 
     metrics_dict = {
         # --- Macro (per-class, equal weight) ---
-        "jaccard_macro":   MulticlassJaccardIndex(num_classes=num_classes, average='macro'),
-        "accuracy_macro":  MulticlassAccuracy(num_classes=num_classes, average='macro'),
-        "f1_macro":        MulticlassF1Score(num_classes=num_classes, average='macro'),
-        "precision_macro": MulticlassPrecision(num_classes=num_classes, average='macro'),
-        "recall_macro":    MulticlassRecall(num_classes=num_classes, average='macro'),
+        "jaccard_macro":   MulticlassJaccardIndex(num_classes=num_classes,ignore_index=ignore_index, average='macro'),
+        "accuracy_macro":  MulticlassAccuracy(num_classes=num_classes,ignore_index=ignore_index, average='macro'),
+        "f1_macro":        MulticlassF1Score(num_classes=num_classes,ignore_index=ignore_index, average='macro'),
+        "precision_macro": MulticlassPrecision(num_classes=num_classes,ignore_index=ignore_index, average='macro'),
+        "recall_macro":    MulticlassRecall(num_classes=num_classes,ignore_index=ignore_index, average='macro'),
 
         # --- Micro (global aggregation) ---
-        "jaccard_micro":   MulticlassJaccardIndex(num_classes=num_classes, average='micro'),
-        "accuracy_micro":  MulticlassAccuracy(num_classes=num_classes, average='micro'),
-        "f1_micro":        MulticlassF1Score(num_classes=num_classes, average='micro'),
-        "precision_micro": MulticlassPrecision(num_classes=num_classes, average='micro'),
-        "recall_micro":    MulticlassRecall(num_classes=num_classes, average='micro'),
+        "jaccard_micro":   MulticlassJaccardIndex(num_classes=num_classes,ignore_index=ignore_index, average='micro'),
+        "accuracy_micro":  MulticlassAccuracy(num_classes=num_classes, ignore_index=ignore_index, average='micro'),
+        "f1_micro":        MulticlassF1Score(num_classes=num_classes, ignore_index=ignore_index, average='micro'),
+        "precision_micro": MulticlassPrecision(num_classes=num_classes, ignore_index=ignore_index, average='micro'),
+        "recall_micro":    MulticlassRecall(num_classes=num_classes, ignore_index=ignore_index, average='micro'),
     }
 
     maximize_list = [

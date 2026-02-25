@@ -83,3 +83,11 @@ def get_sample_locations(complete_tile_size, tb, train_val_key, patch_size, excl
                 locations.append((y, x))
 
     return locations
+
+
+def _preprocess_S2(patch):
+    patch = patch.astype(np.float32)
+    patch = patch - 1000
+    patch = patch / 10000
+    patch = np.clip(patch, 0, 1)
+    return patch

@@ -15,6 +15,7 @@ class HashTableEncoder2D(nn.Module):
                  growth: float,
                  table_size: int,
                  feat_dim: int,
+                 bilinear: bool = True,
                  vectorized: bool = True,
                  table_dtype=torch.float32):
         super().__init__()
@@ -24,6 +25,7 @@ class HashTableEncoder2D(nn.Module):
         self.table_size = int(table_size)
         self.feat_dim = int(feat_dim)
         self.vectorized = bool(vectorized)
+        self.bilinear = bool(bilinear)
 
         tables = torch.empty(self.table_size, self.feat_dim, dtype=table_dtype)
         nn.init.uniform_(tables, a=-1e-2, b=1e-2)
@@ -178,6 +180,8 @@ class HashTableEncoder2D(nn.Module):
             ix1 = ix0 + 1
             iy1 = iy0 + 1
 
+            fx = (xyn_x - ix0).unsqueeze(-1)  # [B, L, N, 1]
+            fy = (xyn_y - iy0).unsqueeze(-1)  # [B, L, N, 1]
             # --- seeds per level, broadcast to [B, L, N] ---
             seed_bln = self.seeds[None, :, None].expand(B, L, N)  # [B, L, N]
 
@@ -200,8 +204,19 @@ class HashTableEncoder2D(nn.Module):
             f01 = TL[idx01]
             f11 = TL[idx11]
 
-            # average 4 corners (no bilinear weighting)
-            enc_flat = 0.25 * (f00 + f10 + f01 + f11)  # [BLN, F]
+            if self.bilinear:
+                # reshape weights to match gathered features
+                fx_f = fx.reshape(-1, 1)  # [BLN, 1]
+                fy_f = fy.reshape(-1, 1)  # [BLN, 1]
+
+                w00 = (1.0 - fx_f) * (1.0 - fy_f)
+                w10 = fx_f * (1.0 - fy_f)
+                w01 = (1.0 - fx_f) * fy_f
+                w11 = fx_f * fy_f
+
+                enc_flat = (w00 * f00 + w10 * f10 + w01 * f01 + w11 * f11)  # [BLN, F]
+            else:
+                enc_flat = 0.25 * (f00 + f10 + f01 + f11)  # [BLN, F]
 
             # unflatten back to [B, L, N, F]
             enc = enc_flat.view(B, L, N, F)
@@ -415,15 +430,16 @@ class LIANetLight(nn.Module):
                  resunet_backbone_size: str = "small",
                  bilinear: bool = True,
                  hash_vectorized: bool = True,
-                 final_activation: str = None):
+                 final_activation: str = None,
+                 n_blocks=3):
         super().__init__()
 
         self.complete_tile_size = complete_tile_size
         self.time_mode = time_mode
-
+        self.num_blocks = n_blocks
         self.encoder = HashTableEncoder2D(
             levels=levels, n_min=n_min, growth=growth,
-            table_size=table_size, feat_dim=feat_dim, vectorized=hash_vectorized,
+            table_size=table_size, feat_dim=feat_dim,  bilinear=bilinear, vectorized=hash_vectorized,
             table_dtype=torch.float32
         )
         enc_ch = self.encoder.out_dim  # = levels * feat_dim
@@ -474,7 +490,7 @@ class LIANetLight(nn.Module):
             resunet_in = enc_ch
 
         # self.light_head = ResUNet(in_channels=resunet_in, encoder_type="resnet50", decoder_size="default", n_res_blocks=3)
-        self.light_head = LiteCNNHead(in_ch=resunet_in, out_ch=128, hidden=256, n_blocks=3)
+        self.light_head = LiteCNNHead(in_ch=resunet_in, out_ch=128, hidden=256, n_blocks=self.num_blocks)
         num_channels_last_layer = 128
 
         self.final_layer = nn.Sequential(

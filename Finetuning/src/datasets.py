@@ -1,3 +1,5 @@
+from curses import window
+from shapely import bounds, buffer
 import torch
 from torch.utils.data import Dataset
 import os
@@ -5,11 +7,12 @@ from tqdm import tqdm
 import numpy as np
 from datetime import datetime
 import math
-
+import geopandas as gpd
 import rasterio
-from rasterio.windows import Window
-
-
+from rasterio.windows import Window, from_bounds
+from rasterio.windows import bounds as window_bounds
+from utils import s2_to_rgb, _preprocess_S2
+from rasterio.warp import reproject, Resampling
 from utils import read_and_normalize_s2, get_sample_locations
 
 
@@ -564,4 +567,191 @@ class BuildingBinaryRaster(Dataset):
             "label": torch.tensor(label, dtype=torch.int64)
         }
 
+class PASTIS(Dataset):
+    def __init__(self,
+                 top_dir,
+                 s2_tiles,
+                 labels,
+                 train_val_key,
+                 val_folds,
+                 ):
 
+
+        self.top_dir = top_dir # "/home/user/data_shared"
+        self.s2_tiles = s2_tiles # "T32ULU"
+        self.labels_path = os.path.join(top_dir, labels, self.s2_tiles)
+        self.metadata_path = os.path.join(top_dir, labels, "metadata.geojson")
+        self.train_val_key = train_val_key
+        self.val_folds = val_folds # [2,3] list of integers from 1 to 5
+
+        # take the first image in the tiles path as reference
+        self.list_of_s2_tiles = os.listdir(os.path.join(self.top_dir, self.s2_tiles))
+        ref_img_path = os.path.join(self.top_dir, self.s2_tiles, self.list_of_s2_tiles[0])
+        ref_img = rasterio.open(ref_img_path)
+        ref_transform = ref_img.transform
+        metadata_gdf = gpd.read_file(self.metadata_path)
+
+        patch_id_col = "ID_PATCH"
+
+        if "fold" in metadata_gdf.columns:
+            fold_col = "fold"
+        elif "Fold" in metadata_gdf.columns:
+            fold_col = "Fold"
+        else:
+            raise ValueError("No fold column found in metadata.")
+        t0 = datetime(2015, 1, 1)
+        tile_doy_dates = []
+        
+        self.samples = []
+        for t in tqdm(self.list_of_s2_tiles, desc=f"Building {train_val_key} image label pairs"):
+            tile_ds = rasterio.open(os.path.join(self.top_dir, self.s2_tiles, t))
+             
+            date = t.split(".tif")[0]
+            dt = datetime.strptime(date , "%Y%m%dT%H%M%S")   
+            doy = (dt - t0).total_seconds() / 86400.0  # days since t0
+            for f in os.listdir(self.labels_path):
+                if f.endswith(".tif"):
+                    patch_id_str = f.split("_")[1].split(".")[0]  # e.g., "TARGET_40000.tif"
+                    if metadata_gdf[patch_id_col].dtype.kind in "iu" and patch_id_str.isdigit():
+                        patch_id = int(patch_id_str)
+                    else:
+                        patch_id = patch_id_str
+                    # open the labels with rasterio
+                    label_ds = rasterio.open(os.path.join(self.labels_path, f))
+                    # Corner indices from bounds (rows, cols).
+                    row_min, col_min = rasterio.transform.rowcol(ref_transform, label_ds.bounds.left, label_ds.bounds.top)
+                    image_patch = tile_ds.read(window=Window(col_min, row_min, 128, 128)) 
+                    fold = metadata_gdf[metadata_gdf[patch_id_col] == patch_id][fold_col].values[0]
+                    
+                    if self.train_val_key == "train" and fold not in self.val_folds:
+                            self.samples.append({
+                                "doy": doy,
+                                "x": col_min,
+                                "y": row_min,
+                                "patch_id": patch_id,
+                                "fold": fold,
+                                "s2_img_patch": image_patch,
+                                "label": label_ds.read().squeeze(),
+                                })
+                    elif self.train_val_key == "val" and fold in self.val_folds:
+                            self.samples.append({
+                                "doy": doy,
+                                "x": col_min,
+                                "y": row_min,
+                                "patch_id": patch_id,
+                                "fold": fold,
+                                "s2_img_patch": image_patch,
+                                "label": label_ds.read().squeeze(),  # (128,128) uint8 with values {0,1}
+                                })
+                    else: continue
+        np.random.shuffle(self.samples)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+
+        s = self.samples[idx]
+        return {
+            "delta_days": torch.tensor(s["doy"], dtype=torch.float32),
+            "x_s2": s["x"],
+            "y_s2": s["y"],
+            "s2data": _preprocess_S2(s["s2_img_patch"]),
+            "label": s["label"],
+            "fold": s["fold"],
+            "patch_id": s["patch_id"]
+        }
+    
+class BurnScars(Dataset):
+    def __init__(self,
+                 top_dir,
+                 s2_tiles,
+                 labels,
+                 train_val_key,
+                 ):
+
+
+        self.top_dir = top_dir # "/home/user/data_shared"
+        # self.s2_tiles = s2_tiles # "T11SMT"
+        self.labels_path = os.path.join(top_dir, labels, s2_tiles)
+        # self.metadata_path = metadata_path
+        self.train_val_key = train_val_key
+        # self.labels = []
+
+        if self.train_val_key == "train":
+            img_label_pairs = {
+                'aligned_subsetted_512x512_HLS.S30.T11SMT.2019294.v1.4.mask.tif':'20190504T182921.tif',
+                'aligned_subsetted_512x512_HLS.S30.T11SMT.2018249.v1.4.mask.tif':'20180926T183121.tif',
+                'aligned_subsetted_512x512_HLS.S30.T11SMT.2018154.v1.4.mask.tif':'20180504T182919.tif',
+                'aligned_subsetted_512x512_HLS.S30.T11SMT.2020194.v1.4.mask.tif':'20200423T182909.tif',
+                'aligned_subsetted_512x512_HLS.S30.T11SMT.2020289.v1.4.mask.tif':'20200930T183109.tif',
+                'aligned_subsetted_512x512_HLS.S30.T11SMT.2020249.v1.4.mask.tif':'20200930T183109.tif',
+                'aligned_subsetted_512x512_HLS.S30.T11SMT.2020309.v1.4.mask.tif':'20200930T183109.tif',
+                }
+        elif self.train_val_key == "val":
+            img_label_pairs = {
+                'aligned_subsetted_512x512_HLS.S30.T11SMT.2019309.v1.4.mask.tif':'20191006T183229.tif', # Validation
+                'aligned_subsetted_512x512_HLS.S30.T11SMT.2021248.v1.4.mask.tif':'20210826T182919.tif', # Validation
+            }
+
+
+        t0 = datetime(2015, 1, 1)
+        tile_doy_dates = []
+        xy_offset_points = [i for i in range(0, 1536, 128)]
+        self.samples = []
+        for t in tqdm(img_label_pairs.keys(), desc=f"Building {train_val_key} image label pairs"):
+            # read the label with corresponding 
+            tile_containing_img = img_label_pairs[t]
+            tile_ds = rasterio.open(os.path.join(self.top_dir, "T11SMT" ,tile_containing_img))
+             
+            date = tile_containing_img.split(".tif")[0]
+            dt = datetime.strptime(date , "%Y%m%dT%H%M%S")   
+            doy = (dt - t0).total_seconds() / 86400.0  # days since t0
+            
+            label_ds = rasterio.open(os.path.join(self.labels_path, t))
+            # iterate through xy_offset_points
+            for x in xy_offset_points:
+                for y in xy_offset_points:
+                    #read labels with this x and y as the top left corner, and 128x128 window size
+                    label_window = Window(x, y, 128, 128)
+                    lable_patch = label_ds.read(window=label_window)
+                    left, bottom, right, top = window_bounds(label_window, transform=label_ds.transform)
+                    s2_window = from_bounds(left, bottom, right, top, transform=tile_ds.transform)
+                    # read the same area in image
+                    s2_patch = tile_ds.read(window=s2_window)
+                    assert lable_patch.shape[1] == 128 and lable_patch.shape[2] == 128, f"S2 patch shape {s2_patch.shape} does not match label patch shape {lable_patch.shape}"
+                    assert s2_patch.shape[1] == 128 and s2_patch.shape[2] == 128, f"S2 patch shape {s2_patch.shape} does not match label patch shape {lable_patch.shape}"
+                    if lable_patch.sum() == 0: # do not use labels with only non-burned pixels
+                        continue
+                    else:
+                        #fill -1 values in label with 0 (non-burned)
+                        lable_patch[lable_patch == -1] = 0
+                        burned_percentage = (lable_patch > 0).mean()
+                        self.samples.append({
+                            "doy": doy,
+                            "x": int(s2_window.col_off),
+                            "y": int(s2_window.row_off),
+                            "s2_img_patch": s2_patch,
+                            "label": lable_patch.squeeze(),  # (128,128) uint8 with values {0.0, 1.0}
+                            "burned_percentage": burned_percentage,
+                            })
+
+                    
+            
+        np.random.shuffle(self.samples)
+        print(f"Found {len(self.samples)} samples for {train_val_key} with >0% burned area")
+        print(f"Average burned percentage across samples: {np.mean([s['burned_percentage'] for s in self.samples])*100:.2f}%")
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+
+        s = self.samples[idx]
+        return {
+            "delta_days": torch.tensor(s["doy"], dtype=torch.float32),
+            "x_s2": s["x"],
+            "y_s2": s["y"],
+            "s2data": _preprocess_S2(s["s2_img_patch"]),
+            "label": s["label"],
+        }
+    

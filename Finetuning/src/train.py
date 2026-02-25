@@ -5,7 +5,7 @@ from omegaconf import OmegaConf
 from utils import dice_loss_with_logits
 from settings import * 
 
-@main(config_path="configs", config_name="BF_clas_LIANet")
+@main(config_path="configs", config_name="BurnScars_LIANet")
 def main_cfg(args: DictConfig):
     # only one visible device
     import os
@@ -16,7 +16,7 @@ def main_cfg(args: DictConfig):
     from torchinfo import summary
     from torch.utils.tensorboard import SummaryWriter
 
-    from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster
+    from helpers import load_train_eval_datasets, load_model_class
     from models.models_finetune import DownstreamModel, UNet, MicroUNet
 
     from utils import s2_to_rgb
@@ -39,16 +39,13 @@ def main_cfg(args: DictConfig):
     torch.cuda.manual_seed_all(args.seed)   
     # ================= OPTIONAL CONSTANTS =================
 
-    LABELS = labels[args.task]
-    MODEL_PATH = models[args.checkpoint_area]
-    COMPLETE_TILESIZE = area[args.checkpoint_area.split("_")[0]]
-    NUM_CLASSES = num_classes[args.task]
+    
+    COMPLETE_TILESIZE = area[args.checkpoint_area.split("_")[0]] if args.task not in ["BurnScars", "PASTIS"] else 10980
     TASK_TYPE = "regression" if args.task in ["meta_canopy_height", "building_footprints"] else "segmentation"
-    ACTIVATION_FUNCTION = activation_functions[args.task]
 
     now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     model_size_tag = args.checkpoint_area.split("_")[1]
-    
+
     # make consisting nameing of the folders
     if args.model_type == "unet":
         model_name = "unet"
@@ -75,106 +72,16 @@ def main_cfg(args: DictConfig):
 
     # ================= LOAD DATASET =================
 
-    if args.task == "dynamic_world":
-        train_ds = DynamicWorld(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="train",
-            complete_tile_size=COMPLETE_TILESIZE,
-        )
-        val_ds = DynamicWorld(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="val",
-            complete_tile_size=COMPLETE_TILESIZE,
-        )
-
-    elif args.task == "meta_canopy_height":
-        train_ds = MetaCanopyHeights(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="train",
-            complete_tile_size=COMPLETE_TILESIZE,
-        )
-        val_ds = MetaCanopyHeights(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="val",
-            complete_tile_size=COMPLETE_TILESIZE,
-        )
-
-    elif args.task == "building_footprints":
-        px1 = (0, 4800) # We lack labels for this area, so we exclude it from training/validation
-        px2 = (3040, 6080)
-        train_ds = BuildingCoverageRaster(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="train",
-            complete_tile_size=COMPLETE_TILESIZE,
-            exclude_px1_px2=(px1, px2),
-        )
-        val_ds = BuildingCoverageRaster(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="val",
-            complete_tile_size=COMPLETE_TILESIZE,
-            exclude_px1_px2=(px1, px2),
-        )
-
-    elif args.task == "building_footprints_binary":
-        px1 = (0, 4800) # We lack labels for this area, so we exclude it from training/validation
-        px2 = (3040, 6080)
-        train_ds = BuildingBinaryRaster(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="train",
-            complete_tile_size=COMPLETE_TILESIZE,
-            exclude_px1_px2=(px1, px2),
-        )
-        val_ds = BuildingBinaryRaster(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="val",
-            complete_tile_size=COMPLETE_TILESIZE,
-            exclude_px1_px2=(px1, px2),
-        )
-
-    elif args.task == "dominant_leaf_type":
-        train_ds = DominantLeafTypeSegmentation(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="train",
-            complete_tile_size=COMPLETE_TILESIZE,
-        )
-        val_ds = DominantLeafTypeSegmentation(
-            top_dir=TOP_DIR,
-            s2_tiles=S2_TILES,
-            labels=LABELS,
-            training_bounds_left_top_right_bottom=args.train_area_bounds,
-            train_val_key="val",
-            complete_tile_size=COMPLETE_TILESIZE,
-        )
-
-    else:
-        raise ValueError("Invalid task")
+    train_ds, val_ds = load_train_eval_datasets(
+        task=args.task,
+        TOP_DIR=TOP_DIR[args.task],
+        S2_TILES=s2_tiles[args.task],
+        LABELS=labels[args.task],
+        train_area_bounds=args.train_area_bounds,
+        COMPLETE_TILESIZE=COMPLETE_TILESIZE,
+        exclude_px1_px2=(args.exclude_px1, args.exclude_px2) if args.task == "building_footprints" else None,
+        val_folds=args.val_folds if args.task == "PASTIS" else None,
+    )
 
 
     # ================= GENERATE DATALOADERS =================
@@ -199,53 +106,13 @@ def main_cfg(args: DictConfig):
 
     # ================= BUILD MODEL =================
 
-    if args.model_type in ["replace_final_block", "replace_final_block_4x"]:
-        
-        if args.task == "building_footprints_binary":
-            if not args.model_type == "replace_final_block_4x":
-                raise ValueError("Footprint classification must be run with 4x model")
-        
-        model = DownstreamModel(
-            model_path=MODEL_PATH,
-            checkpoint_path_relative="model_checkpoints/latest_validation_checkpoint.pt",
-            adaption_strategy=args.model_type,
-            num_classes=NUM_CLASSES,
-            activation=ACTIVATION_FUNCTION,
-        )
-
-    elif args.model_type == "unet":
-
-        if args.task == "building_footprints_binary":
-            model = UNet(n_channels=12,
-                        n_classes=NUM_CLASSES,
-                        backbone_size="small",
-                        bilinear=True,
-                        activation=ACTIVATION_FUNCTION,
-                        upsample_4x=True)
-        else:
-            model = UNet(n_channels=12,
-                        n_classes=NUM_CLASSES,
-                        backbone_size="small",
-                        bilinear=True,
-                        activation=ACTIVATION_FUNCTION)
-
-    elif args.model_type == "micro_unet":
-        if args.task == "building_footprints_binary":
-            model = MicroUNet(n_channels=12,
-                            num_classes=NUM_CLASSES,
-                            bilinear=True,
-                            activation=ACTIVATION_FUNCTION,
-                            upsample_4x=True)
-        else:
-            model = MicroUNet(n_channels=12,
-                            num_classes=NUM_CLASSES,
-                            bilinear=True,
-                            activation=ACTIVATION_FUNCTION,
-                            upsample_4x=False)
-
-    else:
-        raise ValueError("Invalid model_type")
-
+    model = load_model_class(
+        task=args.task,
+        model_type=args.model_type, 
+        MODEL_PATH=models[args.checkpoint_area], 
+        NUM_CLASSES=num_classes[args.task], 
+        ACTIVATION_FUNCTION=activation_functions[args.task])
+    
     summary(model)
 
     model = model.cuda()
@@ -267,8 +134,9 @@ def main_cfg(args: DictConfig):
     elif args.lossfunction == "cross_entropy":  
         if args.weightedSegmentation == False:
             # bce = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([5.0], device='cuda'))
-
-            criterion = torch.nn.CrossEntropyLoss()
+            if args.task == "PASTIS": ignore_index = 19
+            else: ignore_index = None
+            criterion = torch.nn.CrossEntropyLoss(ignore_index=ignore_index)
         else:
             class_weights = weights[args.task]
             class_weights_tensor = torch.tensor(class_weights).cuda()
@@ -294,7 +162,8 @@ def main_cfg(args: DictConfig):
 
     else:  # segmentation
         list_of_metrics, maximize_list = multiclass_segmentation_metrics(
-            num_classes=NUM_CLASSES,
+            num_classes=num_classes[args.task],
+            ignore_index=19 if args.task == "PASTIS" else None
         )
 
     metrics = MetricCollection(list_of_metrics).cuda()
@@ -326,7 +195,8 @@ def main_cfg(args: DictConfig):
 
         # OR: our fancy super cool model witch is way better
         else:   
-            timestamp = batch["timestamp"]
+            # timestamp = batch["timestamp"] # This has changed in the new model
+            timestamp = batch["delta_days"]
             x_s2 = batch["x_s2"]
             y_s2 = batch["y_s2"]
             label = batch["label"]
@@ -362,7 +232,14 @@ def main_cfg(args: DictConfig):
 
             # ANYWAYS: comput loss and backprop 
             # train_loss = bce(outputs, label.float()) + dice_loss_with_logits(outputs, label)
-            train_loss = criterion(outputs.float(), label)
+            if torch.isnan(outputs).any():
+                print("NaNs in outputs"); break
+            if torch.isnan(label.float()).any():
+                print("NaNs in label"); break
+            train_loss = criterion(outputs.float(), label.long())
+            if not torch.isfinite(train_loss):
+                print("Non-finite loss:", train_loss)
+                break
             train_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -428,8 +305,34 @@ def main_cfg(args: DictConfig):
                                 "#1B5E20",  # 2 - needleleaf (dark green)
                                 ]
                         vvmin, vvmax = 0, 2
+                    elif args.task == "PASTIS":
+                        colors = [
+                                (0, 0, 0),
+                                (0.6823529411764706, 0.7803921568627451, 0.9098039215686274),
+                                (1.0, 0.4980392156862745, 0.054901960784313725),
+                                (1.0, 0.7333333333333333, 0.47058823529411764),
+                                (0.17254901960784313, 0.6274509803921569, 0.17254901960784313),
+                                (0.596078431372549, 0.8745098039215686, 0.5411764705882353),
+                                (0.8392156862745098, 0.15294117647058825, 0.1568627450980392),
+                                (1.0, 0.596078431372549, 0.5882352941176471),
+                                (0.5803921568627451, 0.403921568627451, 0.7411764705882353),
+                                (0.7725490196078432, 0.6901960784313725, 0.8352941176470589),
+                                (0.5490196078431373, 0.33725490196078434, 0.29411764705882354),
+                                (0.7686274509803922, 0.611764705882353, 0.5803921568627451),
+                                (0.8901960784313725, 0.4666666666666667, 0.7607843137254902),
+                                (0.9686274509803922, 0.7137254901960784, 0.8235294117647058),
+                                (0.4980392156862745, 0.4980392156862745, 0.4980392156862745),
+                                (0.7803921568627451, 0.7803921568627451, 0.7803921568627451),
+                                (0.7372549019607844, 0.7411764705882353, 0.13333333333333333),
+                                (0.8588235294117647, 0.8588235294117647, 0.5529411764705883),
+                                (0.09019607843137255, 0.7450980392156863, 0.8117647058823529),
+                                (1, 1, 1),
+                            ]
+                        vvmin, vvmax = 0, 19
                     else:
-                        colors = ["#FFFFFF", "#000000"]
+                        # colors = ["#FFFFFF", "#000000"]
+                        colors = ["#000000", "#FFFFFF"]
+
                         vvmin, vvmax = 0, 1
                     
                     cmap = ListedColormap(colors)
