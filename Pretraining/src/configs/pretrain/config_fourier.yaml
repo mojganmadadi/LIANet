@@ -37,7 +37,7 @@ model:
   num_time_frequencies: 8
   time_input_dim: 3
   time_mlp_hidden: 64
-  levels: 11 #13
+  levels: 13
   n_min: 16
   growth: 2
   table_size: 524288 # 2^19
