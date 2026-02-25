@@ -15,11 +15,11 @@ seed: 44
 deterministic: True
 benchmark: False
 
-nEpochs: 800
+nEpochs: 600
 temporal_embedding_mode: "fourier_learned"
 # where to store results
 outputpath: "/home/user/results_shared"
-experimentname: ${temporal_embedding_mode}_2tile_alltimes_france
+experimentname: ${temporal_embedding_mode}_HLS_USA
 
 validation_epochs: 10 # Which epochs to run validation
 special_save_Epochs: [100,200,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600] # Which chechpoints to save permanently, given as a list
@@ -37,10 +37,10 @@ model:
   num_time_frequencies: 8
   time_input_dim: 3
   time_mlp_hidden: 64
-  levels: 11 #13
+  levels: 13 #13
   n_min: 16
   growth: 2
-  table_size: 131072 # 2^17
+  table_size: 524288 # 2^19, 131072
   feat_dim: 128
   complete_tile_size: 10980 # Sentinel-2 max tile size for two adjacent tiles
   resunet_backbone_size: "small"
@@ -69,7 +69,7 @@ dataset_train:
   image_size: 128
   complete_tile_size: ${complete_tile_size}
   # tile_names: ["T16TEK", "T16TFK"]
-  tile_names: ["T32ULU"]
+  tile_names: ["T11SMT"]
   # tile_names: ["T32UPU", "T32UQU"]
   time_sampling: "available"
 
@@ -83,7 +83,7 @@ dataset_plot:
   image_size: 128
   complete_tile_size: ${complete_tile_size}
   # tile_names: ["T16TEK", "T16TFK"]
-  tile_names: ["T32ULU"]
+  tile_names: ["T11SMT"]
   # tile_names: ["T32UPU", "T32UQU"]
   time_sampling: "available"
 
@@ -103,7 +103,7 @@ dataloader_train:
 dataloader_plot:
   _target_: "torch.utils.data.DataLoader"
   batch_size: 64
-  num_workers: 8
+  num_workers: 16
   drop_last: True
   pin_memory: True
   persistent_workers: True
