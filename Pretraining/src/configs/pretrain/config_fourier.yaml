@@ -10,21 +10,21 @@ hydra:
   run:  
     dir: .
 
-gpus: [0, 1, 2, 3, 4, 5, 6, 7]  # List of GPU ids to use, empty list means CPU
+gpus: [0, 1, 2, 3, 4, 5, 7]  # List of GPU ids to use, empty list means CPU
 seed: 44
 deterministic: True
 benchmark: False
 
-nEpochs: 600
+nEpochs: 1600
 temporal_embedding_mode: "fourier_learned"
 # where to store results
 outputpath: "/home/user/results_shared"
-experimentname: ${temporal_embedding_mode}_HLS_USA
+experimentname: ${temporal_embedding_mode}_2tile_alltimes_USA_available
 
 validation_epochs: 10 # Which epochs to run validation
 special_save_Epochs: [100,200,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600] # Which chechpoints to save permanently, given as a list
 num_channels: 12 # Sentinel-2 has 12 channels
-complete_tile_size: 10980  # A0 =5000, A+=7071, A++=10980 (pixels)
+complete_tile_size: 20982  # A0 =5000, A+=7071, A++=10980 (pixels)
 
 
 trainroutine:
@@ -37,12 +37,12 @@ model:
   num_time_frequencies: 8
   time_input_dim: 3
   time_mlp_hidden: 64
-  levels: 13 #13
+  levels: 11 #13
   n_min: 16
   growth: 2
-  table_size: 524288 # 2^19, 131072
+  table_size: 524288 # 2^19
   feat_dim: 128
-  complete_tile_size: 10980 # Sentinel-2 max tile size for two adjacent tiles
+  complete_tile_size: 20982 # Sentinel-2 max tile size for two adjacent tiles
   resunet_backbone_size: "small"
   bilinear: True
   out_channels: ${num_channels}
@@ -65,29 +65,23 @@ scheduler:
 dataset_train: 
   _target_: "dataset.LIANetPretrainingDataset"
   iterations_per_epoch: 1024000
-  topdir_dataset: "/home/user/data_shared"
+  topdir_dataset: "/home/user/data_local/extended_area_experiment_data"
   image_size: 128
   complete_tile_size: ${complete_tile_size}
-  # tile_names: ["T16TEK", "T16TFK"]
-  tile_names: ["T11SMT"]
+  tile_names: ["T16TEK", "T16TFK"]
+  # tile_names: ["T32ULU"]
   # tile_names: ["T32UPU", "T32UQU"]
   time_sampling: "available"
-
-
 
 
 dataset_plot:
   _target_: "dataset.LIANetPretrainingPlotterDataset"
-  iterations_per_epoch: 1024
-  topdir_dataset: "/home/user/data_shared"
+  iterations_per_epoch: 512
+  topdir_dataset: "/home/user/data_local/extended_area_experiment_data"
   image_size: 128
   complete_tile_size: ${complete_tile_size}
-  # tile_names: ["T16TEK", "T16TFK"]
-  tile_names: ["T11SMT"]
-  # tile_names: ["T32UPU", "T32UQU"]
-  time_sampling: "available"
-
-
+  tile_names: ["T16TEK", "T16TFK"]
+  time_sampling: "random_doy"
 
 
 dataloader_train:

@@ -5,15 +5,26 @@ from typing import Literal
 import os
 from models.utils import group_norm
 import omegaconf, hydra
-      
+
+def _load_checkpoint_state_dict(checkpoint_path: str) -> dict:
+    ckpt = torch.load(checkpoint_path, map_location="cpu")
+    sd = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
+    if sd and all(k.startswith("module.") for k in sd.keys()):
+        sd = {k[len("module."):]: v for k, v in sd.items()}
+    return sd
+
 class DownstreamModel(nn.Module):
     def __init__(
         self,
         model_path: str,
         checkpoint_path_relative: str,
-        adaption_strategy: Literal['replace_final_block', "replace_final_block_4x"],
+        adaption_strategy: Literal['replace_final_block', "replace_final_block_4x", "replace_final_block_10meter_to_30meter"],
         num_classes: int = None,  # default None (required for regression)
         activation: Literal['none', 'relu'] = 'none',
+        # NEW: head capacity knobs
+        head_hidden: int = 256,   # try 256 for ~2M-ish; 320/384 for bigger
+        head_depth: int = 6,      # increase for more params; 6-8 is typical
+        print_head_params: bool = True,
     ):
 
         super().__init__()
@@ -31,15 +42,17 @@ class DownstreamModel(nn.Module):
         sd = ckpt["model_state_dict"]
         if all(k.startswith("module.") for k in sd.keys()):
             sd = {k[len("module."):]: v for k, v in sd.items()}
-        self.generator.load_state_dict(sd, strict=True)
+        self.generator.load_state_dict(sd, strict=False)
 
         # -------------------------
         # Check ResUNet structure
         # -------------------------
-        if not hasattr(self.generator, "resunet") or not hasattr(self.generator.resunet, "final_conv"):
-            raise AttributeError("Expected generator.resunet.final_conv to exist.")
+        print(self.generator)
+        # if not hasattr(self.generator, "light_head") or not hasattr(self.generator.light_head, "final_layer"):
+        #     raise AttributeError("Expected generator.final_layer to exist.")
 
-        trunk_out_ch = self.generator.resunet.final_conv.out_channels
+        # trunk_out_ch = self.generator.light_head.out_channels
+        trunk_out_ch = 128
 
         if activation == "none":
             self.final_activation = nn.Identity()
@@ -54,22 +67,103 @@ class DownstreamModel(nn.Module):
 
         if adaption_strategy == "replace_final_block":
             self.new_head = nn.Sequential(
-                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1), group_norm(trunk_out_ch), nn.ReLU(inplace=True),
-                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1), group_norm(trunk_out_ch), nn.ReLU(inplace=True),
-                nn.Conv2d(trunk_out_ch, trunk_out_ch // 2, kernel_size=3, padding=1), group_norm(trunk_out_ch // 2), nn.ReLU(inplace=True),
-                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1), group_norm(trunk_out_ch // 2), nn.ReLU(inplace=True),
-                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 4, kernel_size=3, padding=1), group_norm(trunk_out_ch // 4), nn.ReLU(inplace=True),
+                # ---- extra capacity at full width ----
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                # ---- down to half width (deeper than before) ----
+                nn.Conv2d(trunk_out_ch, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                # ---- down to quarter width (extra depth) ----
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 4, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 4),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 4, trunk_out_ch // 4, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 4),
+                nn.ReLU(inplace=True),
+
+                # ---- classifier ----
                 nn.Conv2d(trunk_out_ch // 4, num_classes, kernel_size=3, padding=1),
             )
+
         elif adaption_strategy == "replace_final_block_4x":
             self.new_head = nn.Sequential(
-                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1), group_norm(trunk_out_ch), nn.ReLU(inplace=True),
-                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1), group_norm(trunk_out_ch), nn.ReLU(inplace=True),
+                # ---- extra capacity at full width ----
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
                 nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                nn.Conv2d(trunk_out_ch, trunk_out_ch // 2, kernel_size=3, padding=1), group_norm(trunk_out_ch // 2), nn.ReLU(inplace=True),
-                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1), group_norm(trunk_out_ch // 2), nn.ReLU(inplace=True),
+
+                # ---- half width (deeper than before) ----
+                nn.Conv2d(trunk_out_ch, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
                 nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 4, kernel_size=3, padding=1), group_norm(trunk_out_ch // 4), nn.ReLU(inplace=True),
+
+                # ---- quarter width (extra depth) ----
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 4, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 4),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 4, trunk_out_ch // 4, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 4),
+                nn.ReLU(inplace=True),
+
+                # ---- classifier ----
                 nn.Conv2d(trunk_out_ch // 4, num_classes, kernel_size=3, padding=1),
             )
         else:
@@ -84,7 +178,7 @@ class DownstreamModel(nn.Module):
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-                
+        
         # -------------------------
         # Freeze backbone, keep reconstruction layer
         # -------------------------
@@ -97,11 +191,11 @@ class DownstreamModel(nn.Module):
         self.num_classes = num_classes  # kept for compatibility
 
     def forward(self, timestamps: torch.Tensor, x0: torch.Tensor, y0: torch.Tensor):
-        features = self.generator(timestamps, x0, y0)
-        reconstruction = self.generators_final_layer(features)
-        out = self.new_head(features)
-        out = self.final_activation(out)
-
+        with torch.cuda.amp.autocast(True):
+            features = self.generator(timestamps, x0, y0)
+            reconstruction = self.generators_final_layer(features)
+            out = self.new_head(features)
+            out = self.final_activation(out)
         return reconstruction, out
 
 # ========== UNet Implementation ==========
