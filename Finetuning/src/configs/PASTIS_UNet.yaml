@@ -30,8 +30,8 @@ lossfunction: cross_entropy
 batchsize: 32
 learningrate: 0.0001
 num_workers: 8
-epochs: 100
+epochs: 60
 warmup_epochs: 0
 gpu_id: 6
-validate_every_n_epochs: 5
+validate_every_n_epochs: 2
 plot_every_n_epochs: 5

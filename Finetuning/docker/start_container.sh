@@ -4,7 +4,7 @@ docker build  -t mmadadi/lianetfinetuning .
 docker run -it --gpus all --name lianetfinetuning --ipc=host \
   --shm-size 48G \
   --gpus all \
-  -p 6632:6632 \
+  -p 6612:6612 \
   -v ~/git/LIANet/Finetuning/src:/home/user/src \
   -v ~/Data/LIANet_data:/home/user/data_local \
   -v /datatank/mojgan.madadikhaljan/LIANet_data:/home/user/data_shared  \

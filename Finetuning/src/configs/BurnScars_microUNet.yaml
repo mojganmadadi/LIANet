@@ -20,6 +20,7 @@ model_type: micro_unet
 checkpoint_area: "full_tile_modified_BurnScars" 
 train_area_bounds: none
 weightedSegmentation: False
+val_folds: None
 
 
 logging_directory: /home/user/results_local/finetuning_results
@@ -27,10 +28,10 @@ labels_path: masks/BurnScars
 # deep learning related
 lossfunction: cross_entropy
 batchsize: 32
-learningrate: 0.000001
+learningrate: 0.0001
 
 num_workers: 8
-epochs: 300
+epochs: 50
 warmup_epochs: 0
 gpu_id: 6
 validate_every_n_epochs: 1

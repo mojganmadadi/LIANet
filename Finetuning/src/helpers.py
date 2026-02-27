@@ -1,6 +1,56 @@
+import os
+
 from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster, PASTIS, BurnScars
 from models.models_finetune import DownstreamModel, UNet, MicroUNet
 
+
+import numpy as np
+import rasterio
+from pathlib import Path
+
+def compute_mean_std(tile_paths):
+    """
+    Compute per-band mean and std over a list of stacked Sentinel-2 GeoTIFF tiles.
+
+    Parameters
+    ----------
+    tile_paths : list of str or Path
+        List of file paths to stacked 12-band .tif images
+
+    Returns
+    -------
+    mean : np.ndarray shape (12,)
+    std  : np.ndarray shape (12,)
+    """
+    tiles_paths_list = [os.path.join(tile_paths, f) for f in os.listdir(tile_paths)]
+    n_bands = 12
+
+    # Running statistics
+    pixel_count = np.zeros(n_bands, dtype=np.float64)
+    band_sum = np.zeros(n_bands, dtype=np.float64)
+    band_sum_sq = np.zeros(n_bands, dtype=np.float64)
+
+    for tile in tiles_paths_list:
+        with rasterio.open(tile) as src:
+            data = src.read().astype(np.float64)  # shape: (12, H, W)
+
+        # Flatten spatial dimensions
+        data = data.reshape(n_bands, -1)
+
+        # Mask NaNs if present
+        valid_mask = ~np.isnan(data)
+
+        for b in range(n_bands):
+            band_pixels = data[b][valid_mask[b]]
+
+            pixel_count[b] += band_pixels.size
+            band_sum[b] += band_pixels.sum()
+            band_sum_sq[b] += np.sum(band_pixels ** 2)
+
+    mean = band_sum / pixel_count
+    std = np.sqrt((band_sum_sq / pixel_count) - (mean ** 2))
+
+    return mean, std
 
 def load_train_eval_datasets(
     task, 
@@ -109,7 +159,7 @@ def load_train_eval_datasets(
             train_val_key="val",
             complete_tile_size=COMPLETE_TILESIZE,
         )
-    elif task == "PASTIS":
+    elif task == "PASTIS_T32ULU" or task == "PASTIS_T31TFM":
         train_ds = PASTIS(
             top_dir=TOP_DIR,
             s2_tiles=S2_TILES,

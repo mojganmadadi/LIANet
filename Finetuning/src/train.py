@@ -1,4 +1,5 @@
 from cProfile import label
+from importlib.resources import path
 from hydra import main
 from omegaconf import DictConfig
 from omegaconf import OmegaConf
@@ -40,19 +41,25 @@ def main_cfg(args: DictConfig):
     # ================= OPTIONAL CONSTANTS =================
 
     
-    COMPLETE_TILESIZE = area[args.checkpoint_area.split("_")[0]] if args.task not in ["BurnScars", "PASTIS"] else 10980
+    # COMPLETE_TILESIZE = area[args.checkpoint_area.split("_")[0]] if args.task not in ["BurnScars", "PASTIS_T31TFM", "PASTIS_T32ULU"] else 10980
+    COMPLETE_TILESIZE = 10980
     TASK_TYPE = "regression" if args.task in ["meta_canopy_height", "building_footprints"] else "segmentation"
 
     now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    model_size_tag = args.checkpoint_area.split("_")[1]
+    # model_size_tag = args.checkpoint_area.split("_")[1]
+    model_size_tag = args.checkpoint_area.split("_")[0] if args.checkpoint_area.split("_")[0] in ["5k", "7k", "10k"] else "full_tile"
+
 
     # make consisting nameing of the folders
     if args.model_type == "unet":
-        model_name = "unet"
+        if args.val_folds != "None": model_name = f"unet_valFolds{args.val_folds[0]}"
+        else: model_name = f"unet_full_tile_nonburned"
     elif args.model_type == "micro_unet":
-        model_name = "micro_unet"
+        if args.val_folds != "None": model_name = f"micro_unet_valFolds{args.val_folds[0]}"
+        else: model_name = f"micro_unet_full_tile_nonburned"
     elif args.model_type == "replace_final_block":
-        model_name = f"replace_final_block__{model_size_tag}_backbone"
+        if args.val_folds != "None": model_name = f"LIANet_valFolds{args.val_folds[0]}"
+        else: model_name = f"LIANet_full_tile_nonburned"
     elif args.model_type == "replace_final_block_4x":
         model_name = f"replace_final_block__{model_size_tag}_backbone"
     else:
@@ -60,7 +67,7 @@ def main_cfg(args: DictConfig):
     
     OUTPUTDIR = os.path.join(args.logging_directory,
                              args.task,
-                             args.checkpoint_area.split("_")[0],
+                            #  args.checkpoint_area.split("_")[0],
                              model_name,
                              now)
     
@@ -80,7 +87,7 @@ def main_cfg(args: DictConfig):
         train_area_bounds=args.train_area_bounds,
         COMPLETE_TILESIZE=COMPLETE_TILESIZE,
         exclude_px1_px2=(args.exclude_px1, args.exclude_px2) if args.task == "building_footprints" else None,
-        val_folds=args.val_folds if args.task == "PASTIS" else None,
+        val_folds=args.val_folds if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU"] else None,
     )
 
 
@@ -134,9 +141,10 @@ def main_cfg(args: DictConfig):
     elif args.lossfunction == "cross_entropy":  
         if args.weightedSegmentation == False:
             # bce = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([5.0], device='cuda'))
-            if args.task == "PASTIS": ignore_index = 19
-            else: ignore_index = None
-            criterion = torch.nn.CrossEntropyLoss(ignore_index=ignore_index)
+            if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU"]:
+                criterion = torch.nn.CrossEntropyLoss(ignore_index=255)
+            else: criterion = torch.nn.CrossEntropyLoss()
+            
         else:
             class_weights = weights[args.task]
             class_weights_tensor = torch.tensor(class_weights).cuda()
@@ -147,7 +155,8 @@ def main_cfg(args: DictConfig):
     # LR Scheduler (Cosine Decay with Warmup)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learningrate)
 
-    min_lr = 0.01*args.learningrate
+    # min_lr = 0.01*args.learningrate
+    min_lr = 1e-6
     scheduler = CosineAnnealingWarmupLR(
         optimizer,
         warmup_epochs=args.warmup_epochs,
@@ -163,7 +172,7 @@ def main_cfg(args: DictConfig):
     else:  # segmentation
         list_of_metrics, maximize_list = multiclass_segmentation_metrics(
             num_classes=num_classes[args.task],
-            ignore_index=19 if args.task == "PASTIS" else None
+            ignore_index=255 if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU"] else None
         )
 
     metrics = MetricCollection(list_of_metrics).cuda()
@@ -229,15 +238,17 @@ def main_cfg(args: DictConfig):
             optimizer.zero_grad()
 
             _ , outputs, label = forward_model(model, args.model_type, batch)
-
+            if not torch.isfinite(outputs).all().item():
+                print("Non-finite outputs")
+                break
             # ANYWAYS: comput loss and backprop 
             # train_loss = bce(outputs, label.float()) + dice_loss_with_logits(outputs, label)
             if torch.isnan(outputs).any():
                 print("NaNs in outputs"); break
-            if torch.isnan(label.float()).any():
+            if torch.isnan(label).any():
                 print("NaNs in label"); break
             train_loss = criterion(outputs.float(), label.long())
-            if not torch.isfinite(train_loss):
+            if not torch.isfinite(train_loss).item():
                 print("Non-finite loss:", train_loss)
                 break
             train_loss.backward()
@@ -305,7 +316,7 @@ def main_cfg(args: DictConfig):
                                 "#1B5E20",  # 2 - needleleaf (dark green)
                                 ]
                         vvmin, vvmax = 0, 2
-                    elif args.task == "PASTIS":
+                    elif args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU"]:
                         colors = [
                                 (0, 0, 0),
                                 (0.6823529411764706, 0.7803921568627451, 0.9098039215686274),
@@ -344,6 +355,8 @@ def main_cfg(args: DictConfig):
 
                     if args.model_type in ["unet", "micro_unet"]:
                         reconstruction = torch.zeros_like(batch["s2data"])
+                    if args.task == "BurnScars":
+                        burned_pixel_count = batch["burned_pixel_count"]
                         
                     s2_image = batch["s2data"].detach().cpu().numpy().astype(np.float32)
                     reconstruction = reconstruction.detach().cpu().numpy().astype(np.float32)
@@ -368,6 +381,7 @@ def main_cfg(args: DictConfig):
 
                         axs[3].imshow(label[0,0],vmin=0,vmax=1)
                         axs[3].set_title("Label")
+                        
 
                     else:
                         pred_argmax = np.argmax(outputs, axis=1).astype(np.uint8)
@@ -376,7 +390,9 @@ def main_cfg(args: DictConfig):
                         axs[2].imshow(pred_argmax[0], cmap=cmap, vmin=vvmin, vmax=vvmax)
                         axs[2].set_title("Outputs")
                         axs[3].imshow(label_to_plot[0], cmap=cmap, vmin=vvmin, vmax=vvmax)
-                        axs[3].set_title("Label")
+                        if args.task == "BurnScars": axs[3].set_title(f'Label with burn: {burned_pixel_count[0].detach().cpu()}%')
+                        else: axs[3].set_title("Label")
+                        
 
                     plt.tight_layout()
                     # print(
@@ -398,7 +414,16 @@ def main_cfg(args: DictConfig):
         # Before next epoch
         # =================================================
         writer.flush()
-
+        ckpt = {
+                "epoch": epoch,
+                "globalstep": globalstep,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
+                "args": dict(args) if hasattr(args, "keys") else None,
+            }
+            
+        torch.save(ckpt, os.path.join(OUTPUTDIR, "last.pt"))
 
     # =================================================
     # Finsih Script
@@ -411,6 +436,7 @@ def main_cfg(args: DictConfig):
 
     with open(os.path.join(OUTPUTDIR, "best_steps.json"), "w") as f:
         json.dump({"best_values": best_steps}, f, indent=4)
+    
 
     writer.close()
 

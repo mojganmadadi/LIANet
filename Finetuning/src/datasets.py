@@ -618,7 +618,7 @@ class PASTIS(Dataset):
                         patch_id = patch_id_str
                     # open the labels with rasterio
                     label_ds = rasterio.open(os.path.join(self.labels_path, f))
-                    # Corner indices from bounds (rows, cols).
+                    label_patch = label_ds.read().squeeze()
                     row_min, col_min = rasterio.transform.rowcol(ref_transform, label_ds.bounds.left, label_ds.bounds.top)
                     image_patch = tile_ds.read(window=Window(col_min, row_min, 128, 128)) 
                     fold = metadata_gdf[metadata_gdf[patch_id_col] == patch_id][fold_col].values[0]
@@ -631,7 +631,7 @@ class PASTIS(Dataset):
                                 "patch_id": patch_id,
                                 "fold": fold,
                                 "s2_img_patch": image_patch,
-                                "label": label_ds.read().squeeze(),
+                                "label": label_patch,
                                 })
                     elif self.train_val_key == "val" and fold in self.val_folds:
                             self.samples.append({
@@ -641,7 +641,7 @@ class PASTIS(Dataset):
                                 "patch_id": patch_id,
                                 "fold": fold,
                                 "s2_img_patch": image_patch,
-                                "label": label_ds.read().squeeze(),  # (128,128) uint8 with values {0,1}
+                                "label": label_patch,  # (128,128) uint8 with values {0,1}
                                 })
                     else: continue
         np.random.shuffle(self.samples)
@@ -721,26 +721,27 @@ class BurnScars(Dataset):
                     s2_patch = tile_ds.read(window=s2_window)
                     assert lable_patch.shape[1] == 128 and lable_patch.shape[2] == 128, f"S2 patch shape {s2_patch.shape} does not match label patch shape {lable_patch.shape}"
                     assert s2_patch.shape[1] == 128 and s2_patch.shape[2] == 128, f"S2 patch shape {s2_patch.shape} does not match label patch shape {lable_patch.shape}"
+                    lable_patch[lable_patch == -1] = 0
+
                     if lable_patch.sum() == 0: # do not use labels with only non-burned pixels
                         continue
                     else:
                         #fill -1 values in label with 0 (non-burned)
-                        lable_patch[lable_patch == -1] = 0
-                        burned_percentage = (lable_patch > 0).mean()
+                        burned_pixel_count = (lable_patch > 0).sum()
                         self.samples.append({
                             "doy": doy,
                             "x": int(s2_window.col_off),
                             "y": int(s2_window.row_off),
                             "s2_img_patch": s2_patch,
                             "label": lable_patch.squeeze(),  # (128,128) uint8 with values {0.0, 1.0}
-                            "burned_percentage": burned_percentage,
+                            "burned_pixel_count": burned_pixel_count,
                             })
 
                     
             
         np.random.shuffle(self.samples)
         print(f"Found {len(self.samples)} samples for {train_val_key} with >0% burned area")
-        print(f"Average burned percentage across samples: {np.mean([s['burned_percentage'] for s in self.samples])*100:.2f}%")
+        print(f"Average burned pixel count across samples: {np.mean([s['burned_pixel_count'] for s in self.samples])}")
     def __len__(self):
         return len(self.samples)
 
@@ -753,5 +754,6 @@ class BurnScars(Dataset):
             "y_s2": s["y"],
             "s2data": _preprocess_S2(s["s2_img_patch"]),
             "label": s["label"],
+            "burned_pixel_count": s["burned_pixel_count"],
         }
     
