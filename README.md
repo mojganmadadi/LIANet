@@ -3,6 +3,8 @@
 Official Repository for the Paper:  
 📄 *Location Is All You Need: Continuous Spatiotemporal Neural Representations of Earth Observation Data*
 
+<img width="4170" height="2073" alt="concept (2)" src="https://github.com/user-attachments/assets/2468bb5b-8433-451b-9a00-0f7638d7f995" />
+
 This repository contains the implementation of **LIANet**, a neural architecture designed for learning continuous spatiotemporal representations from Earth Observation (EO) data.  
 It includes scripts for pretraining and fine-tuning, needed to reproduce the results presented in the paper. The corresponding dataset and labels will be open-sourced upon acceptance.
 
