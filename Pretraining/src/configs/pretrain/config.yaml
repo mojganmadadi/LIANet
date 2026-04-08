@@ -10,7 +10,7 @@ hydra:
   run:  
     dir: .
 
-gpu_idx: [0]  # Single gpu run configuration implemented
+gpu_idx: [2]  # Single gpu run configuration implemented
 seed: 44
 deterministic: True
 benchmark: False
@@ -31,14 +31,14 @@ trainroutine:
   _target_: "trainroutines.pretraining.LIANetTrainer"
 
 model:
-  _target_: "models.LIANet.LIANet"
+  _target_: "models.LIANet.LIANetLight"
   timestamp_dim: 4    # four seasons
   levels: 11
   n_min: 16
   growth: 2
   table_size: 131072 # 2^17
-  feat_dim: 4
-  complete_tile_size: 10980 # Sentinel-2 max tile size
+  feat_dim: 128
+  complete_tile_size: 5000 # Sentinel-2 max tile size
   resunet_backbone_size: "small"
   bilinear: True
   out_channels: ${num_channels}

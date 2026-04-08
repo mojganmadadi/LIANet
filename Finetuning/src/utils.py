@@ -9,6 +9,18 @@ def _intersects_exclusion(y, x, excl, win_size):
     wxmin, wxmax = x, x + win_size
     return not ((wxmax <= xmin) or (wxmin >= xmax) or (wymax <= ymin) or (wymin >= ymax))
 
+import torch
+import torch.nn.functional as F
+
+def dice_loss_with_logits(logits, targets, eps=1e-6):
+    probs = torch.sigmoid(logits)
+    targets = targets.float()
+    dims = (0, 2, 3)  # N,H,W over batch
+    intersection = (probs * targets).sum(dims)
+    union = probs.sum(dims) + targets.sum(dims)
+    dice = (2 * intersection + eps) / (union + eps)
+    return 1 - dice.mean()
+
 
 def s2_to_rgb(s2data):
     """Convert Sentinel-2 data to RGB for visualization."""
@@ -71,3 +83,11 @@ def get_sample_locations(complete_tile_size, tb, train_val_key, patch_size, excl
                 locations.append((y, x))
 
     return locations
+
+
+def _preprocess_S2(patch):
+    patch = patch.astype(np.float32)
+    patch = patch - 1000
+    patch = patch / 10000
+    patch = np.clip(patch, 0, 1)
+    return patch

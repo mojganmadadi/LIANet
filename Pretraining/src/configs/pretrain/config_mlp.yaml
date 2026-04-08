@@ -1,0 +1,95 @@
+# This supresses the output folder
+# that otherwise is automaticly generated
+# by hydra
+defaults:
+  - _self_  
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+gpu_idx: [1]  # Single gpu run configuration implemented
+seed: 44
+deterministic: True
+benchmark: False
+
+nEpochs: 225
+temporal_embedding_mode: "mlp"
+# where to store results
+outputpath: "/home/user/pretraining_results"
+experimentname: ${temporal_embedding_mode}
+
+validation_epochs: 1 # Which epochs to run validation
+special_save_Epochs: [1] # Which chechpoints to save permanently, given as a list
+num_channels: 12 # Sentinel-2 has 12 channels
+complete_tile_size: 10980  # A0 =5000, A+=7071, A++=10980 (pixels)
+
+
+trainroutine:
+  _target_: "trainroutines.pretraining.LIANetTrainer"
+
+model:
+  _target_: "models.LIANet.LIANetLight"
+  timestamp_dim: 43
+  time_mode: ${temporal_embedding_mode}
+  num_time_frequencies: 8
+  time_input_dim: 3
+  time_mlp_hidden: 64
+  levels: 11
+  n_min: 16
+  growth: 2
+  table_size: 131072 # 2^17
+  feat_dim: 256
+  complete_tile_size: 10980 # Sentinel-2 max tile size
+  resunet_backbone_size: "small"
+  bilinear: True
+  out_channels: ${num_channels}
+  preproj_channels: 128
+
+lossfunction:
+  _target_: torch.nn.L1Loss
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0005 
+  weight_decay: 0 
+
+scheduler:
+  _target_: schedulers.lr_scheduler.WarmupCosineLR
+  warmup_epochs: 5
+  max_epochs: ${nEpochs}
+
+dataset_train: 
+  _target_: "dataset.LIANetPretrainingDataset"
+  iterations_per_epoch: 1024000 
+  topdir_dataset: "/home/user/data/temporal_embedding_experiment_data"
+  image_size: 128
+  complete_tile_size: ${complete_tile_size}
+
+
+dataset_plot:
+  _target_: "dataset.LIANetPretrainingPlotterDataset"
+  iterations_per_epoch: 128
+  topdir_dataset: "/home/user/data/temporal_embedding_experiment_data"
+  image_size: 128
+  complete_tile_size: ${complete_tile_size}
+
+
+dataloader_train:
+  _target_: "torch.utils.data.DataLoader"
+  batch_size: 64
+  num_workers: 32
+  drop_last: True
+  pin_memory: True
+  persistent_workers: True
+
+dataloader_plot:
+  _target_: "torch.utils.data.DataLoader"
+  batch_size: 64
+  num_workers: 32
+  drop_last: True
+
+validation_metrics:
+  _target_: "metrics.regression_metrics"

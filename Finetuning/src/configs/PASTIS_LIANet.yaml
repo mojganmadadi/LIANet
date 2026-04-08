@@ -1,0 +1,36 @@
+# Hydra config converted from argparse defaults
+# Note: choices shown as comments for reference
+
+# This supresses the output folder
+# that otherwise is automaticly generated
+# by hydra
+defaults:
+  - _self_  
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+seed: 42
+
+task: none   # PASTIS_T32ULU or PASTIS_T31TFM
+model_type: replace_final_block
+checkpoint_area: none # full_tile_modified_PASTIS_T31TFM or full_tile_modified_PASTIS_T32ULU
+train_area_bounds: none
+weightedSegmentation: False
+val_folds: none
+
+logging_directory: /home/user/results_local/finetuning_results
+labels_path: masks/PASTIS
+# deep learning related
+lossfunction: cross_entropy
+batchsize: 32
+learningrate: 0.0001
+num_workers: 8
+epochs: 60
+warmup_epochs: 0
+gpu_id: none
+validate_every_n_epochs: 2
+plot_every_n_epochs: 5

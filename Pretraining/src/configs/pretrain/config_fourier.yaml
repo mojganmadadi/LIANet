@@ -1,0 +1,108 @@
+# This supresses the output folder
+# that otherwise is automaticly generated
+# by hydra
+defaults:
+  - _self_  
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+gpus: [0, 1, 2, 3, 4, 5, 7]  # List of GPU ids to use, empty list means CPU
+seed: 44
+deterministic: True
+benchmark: False
+
+nEpochs: 1600
+temporal_embedding_mode: "fourier_learned"
+# where to store results
+outputpath: "/home/user/results_shared"
+experimentname: ${temporal_embedding_mode}_2tile_alltimes_USA_available
+
+validation_epochs: 10 # Which epochs to run validation
+special_save_Epochs: [100,200,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600] # Which chechpoints to save permanently, given as a list
+num_channels: 12 # Sentinel-2 has 12 channels
+complete_tile_size: 20982  # A0 =5000, A+=7071, A++=10980 (pixels)
+
+
+trainroutine:
+  _target_: "trainroutines.pretraining.LIANetTrainer"
+
+model:
+  _target_: "models.LIANet.LIANetLight"
+  timestamp_dim: 43
+  time_mode: ${temporal_embedding_mode}
+  num_time_frequencies: 8
+  time_input_dim: 3
+  time_mlp_hidden: 64
+  levels: 13
+  n_min: 16
+  growth: 2
+  table_size: 524288 # 2^19
+  feat_dim: 128
+  complete_tile_size: 20982 # Sentinel-2 max tile size for two adjacent tiles
+  resunet_backbone_size: "small"
+  bilinear: True
+  out_channels: ${num_channels}
+  preproj_channels: 128
+  hash_vectorized: True
+
+lossfunction:
+  _target_: torch.nn.L1Loss
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0005 
+  weight_decay: 0 
+
+scheduler:
+  _target_: schedulers.lr_scheduler.WarmupCosineLR
+  warmup_epochs: 5
+  max_epochs: ${nEpochs}
+
+dataset_train: 
+  _target_: "dataset.LIANetPretrainingDataset"
+  iterations_per_epoch: 1024000
+  topdir_dataset: "/home/user/data_local/extended_area_experiment_data"
+  image_size: 128
+  complete_tile_size: ${complete_tile_size}
+  tile_names: ["T16TEK", "T16TFK"]
+  # tile_names: ["T32ULU"]
+  # tile_names: ["T32UPU", "T32UQU"]
+  time_sampling: "available"
+
+
+dataset_plot:
+  _target_: "dataset.LIANetPretrainingPlotterDataset"
+  iterations_per_epoch: 512
+  topdir_dataset: "/home/user/data_local/extended_area_experiment_data"
+  image_size: 128
+  complete_tile_size: ${complete_tile_size}
+  tile_names: ["T16TEK", "T16TFK"]
+  time_sampling: "random_doy"
+
+
+dataloader_train:
+  _target_: "torch.utils.data.DataLoader"
+  batch_size: 64
+  num_workers: 16
+  drop_last: True
+  pin_memory: True
+  persistent_workers: True
+  prefetch_factor: 4
+
+
+dataloader_plot:
+  _target_: "torch.utils.data.DataLoader"
+  batch_size: 64
+  num_workers: 16
+  drop_last: True
+  pin_memory: True
+  persistent_workers: True
+  prefetch_factor: 4
+
+
+validation_metrics:
+  _target_: "metrics.regression_metrics"
