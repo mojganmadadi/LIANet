@@ -1,5 +1,7 @@
 🛰️ Location Is All You Need (LIANet)
 
+[![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b.svg)]()
+
 Official Repository for the Paper:  
 
 📄 *Location Is All You Need: Continuous Spatiotemporal Neural Representations of Earth Observation Data*
@@ -39,6 +41,35 @@ Use the provided bash scripts to start the corresponding Docker containers with 
 - `Pretraining/docker/start_container.sh` — for **pretraining**  
 - `Finetuning/docker/start_container.sh` — for **fine-tuning**
 
+Before running the code, make sure the **Docker environment** is set up.  
+Use the provided bash scripts to start the corresponding Docker containers with the appropriate mount points:
+
+- `Pretraining/docker/start_container.sh` — for **pretraining**  
+- `Finetuning/docker/start_container.sh` — for **fine-tuning**
+
+---
+
+## Pretraining
+
+Once Docker is running and the data are placed in `~/Data/LIANet_data`, start pretraining with:
+```bash
+python main.py
+```
+The pretrained model checkpoints will be automatically saved to:
+```text
+~/Results/LIANet_results/Pretraining
+```
+## Fine-tuning
+
+After obtaining the pretrained checkpoint, switch to the fine-tuning Docker environment.
+Assuming the labeled data are available in ~/Data/LIANet_data, start fine-tuning with:
+```text
+python train.py
+```
+The fine-tuned model outputs will be saved to:
+```text
+~/Results/LIANet_results/Finetuning
+```
 ---
 
 ## Pretraining
