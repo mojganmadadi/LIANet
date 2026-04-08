@@ -1,5 +1,7 @@
 🛰️ Location Is All You Need (LIANet)
 
+[![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b.svg)]()
+
 Official Repository for the Paper:  
 📄 *Location Is All You Need: Continuous Spatiotemporal Neural Representations of Earth Observation Data*
 
