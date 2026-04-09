@@ -1,6 +1,6 @@
 🛰️ Location Is All You Need (LIANet)
 
-[![arXiv](https://img.shields.io/badge/arXiv-coming%20soon-b31b1b.svg)]()
+[![arXiv](https://img.shields.io/badge/arXiv-2604.07092-B31B1B.svg)](https://arxiv.org/pdf/2604.07092)
 
 Official Repository for the Paper:  
 
