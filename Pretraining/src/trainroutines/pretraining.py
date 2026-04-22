@@ -139,6 +139,9 @@ class LIANetTrainer:
         delta_days = batch["delta_days"]
         doy_sin = batch["doy_sin"]
         doy_cos = batch["doy_cos"]
+        region_idx = batch["reg_indx"]
+        mosaic_width = batch["mosaic_width"]
+
 
         x_s2 = x_s2.to(self.rank, non_blocking=True).float()
         y_s2 = y_s2.to(self.rank, non_blocking=True).float()
@@ -147,20 +150,42 @@ class LIANetTrainer:
         delta_days = delta_days.to(self.rank, non_blocking=True)
         doy_sin = doy_sin.to(self.rank, non_blocking=True)
         doy_cos = doy_cos.to(self.rank, non_blocking=True)
+        region_idx = region_idx.to(self.rank, non_blocking=True).long()
+        mosaic_width = mosaic_width.to(self.rank, non_blocking=True).float()
+        mosaic_width = mosaic_width.to(self.rank, non_blocking=True).long()
+
 
         self.optimizer.zero_grad(set_to_none=True)
         with torch.cuda.amp.autocast(enabled=self.use_amp, dtype=torch.float16):
             m = self.model.module if hasattr(self.model, "module") else self.model
 
             if m.time_mode == "index":
-                prediction = self.model(time_idx, x_s2, y_s2)
+                prediction = self.model(
+                    time_idx,
+                    x_s2,
+                    y_s2,
+                    region_idx=region_idx,
+                    mosaic_width=mosaic_width,
+                )
             elif m.time_mode == "sinusoidal" or m.time_mode == "fourier_learned":
-                prediction = self.model(delta_days, x_s2, y_s2)
+                recon_prediction = self.model(
+                    delta_days,
+                    x_s2,
+                    y_s2,
+                    region_idx=region_idx,
+                    mosaic_width=mosaic_width,
+                )
             elif m.time_mode == "mlp":
                 time_features = torch.stack([delta_days, doy_sin, doy_cos], dim=1)  # (B, 3)
-                prediction = self.model(time_features, x_s2, y_s2)
+                prediction = self.model(
+                    time_features,
+                    x_s2,
+                    y_s2,
+                    region_idx=region_idx,
+                    mosaic_width=mosaic_width,
+                )
 
-            self.loss = self.lossfunction(prediction, s2data)
+            self.loss = self.lossfunction(recon_prediction, s2data)
 
         self.scaler.scale(self.loss).backward()
         
@@ -202,6 +227,9 @@ class LIANetTrainer:
                 delta_days = batch["delta_days"]
                 doy_sin = batch["doy_sin"]
                 doy_cos = batch["doy_cos"]
+                region_idx = batch["reg_indx"]
+                mosaic_width = batch["mosaic_width"]
+
 
                 x_s2 = x_s2.to(self.rank, non_blocking=True).float()
                 y_s2 = y_s2.to(self.rank, non_blocking=True).float()
@@ -210,20 +238,44 @@ class LIANetTrainer:
                 delta_days = delta_days.to(self.rank, non_blocking=True)
                 doy_sin = doy_sin.to(self.rank, non_blocking=True)
                 doy_cos = doy_cos.to(self.rank, non_blocking=True)
+                region_idx = region_idx.to(self.rank, non_blocking=True).long()
+                mosaic_width = mosaic_width.to(self.rank, non_blocking=True).float()
+                mosaic_width = mosaic_width.to(self.rank, non_blocking=True).long()
+
+
+
                 m = self.model.module if hasattr(self.model, "module") else self.model
 
                 if m.time_mode == "index":
-                    pred = self.model(time_idx, x_s2, y_s2)
+                    pred = self.model(
+                        time_idx,
+                        x_s2,
+                        y_s2,
+                        region_idx=region_idx,
+                        mosaic_width=mosaic_width,
+                    )
                 elif m.time_mode == "sinusoidal" or m.time_mode == "fourier_learned":
-                    pred = self.model(delta_days, x_s2, y_s2)
+                    recon_prediction = self.model(
+                        delta_days,
+                        x_s2,
+                        y_s2,
+                        region_idx=region_idx,
+                        mosaic_width=mosaic_width,
+                    )
                 elif m.time_mode == "mlp":
                     time_features = torch.stack([delta_days, doy_sin, doy_cos], dim=1)  # (B, 3)
-                    pred = self.model(time_features, x_s2, y_s2)
+                    pred = self.model(
+                        time_features,
+                        x_s2,
+                        y_s2,
+                        region_idx=region_idx,
+                        mosaic_width=mosaic_width,
+                    )
                 # contiguous tensors
-                prediction = pred.contiguous()
+                recon_prediction = recon_prediction.contiguous()
                 s2data = s2data.contiguous()
                 
-                self.tracker.update(prediction, s2data)
+                self.tracker.update(recon_prediction, s2data)
                 pbar_val.update(1)
 
             pbar_val.close()   
@@ -254,6 +306,9 @@ class LIANetTrainer:
                 delta_days = batch["delta_days"]
                 doy_sin = batch["doy_sin"]
                 doy_cos = batch["doy_cos"]
+                region_idx = batch["reg_indx"]
+                mosaic_width = batch["mosaic_width"]
+
 
                 x_s2 = x_s2.to(self.rank, non_blocking=True).float()
                 y_s2 = y_s2.to(self.rank, non_blocking=True).float()
@@ -262,25 +317,48 @@ class LIANetTrainer:
                 delta_days = delta_days.to(self.rank, non_blocking=True)
                 doy_sin = doy_sin.to(self.rank, non_blocking=True)
                 doy_cos = doy_cos.to(self.rank, non_blocking=True)
+                region_idx = region_idx.to(self.rank, non_blocking=True).long()
+                mosaic_width = mosaic_width.to(self.rank, non_blocking=True).float()
+                mosaic_width = mosaic_width.to(self.rank, non_blocking=True).long()
+
+
 
                 m = self.model.module if hasattr(self.model, "module") else self.model
 
                 if m.time_mode == "index":
-                    pred = self.model(time_idx, x_s2, y_s2)
+                    pred = self.model(
+                        time_idx,
+                        x_s2,
+                        y_s2,
+                        region_idx=region_idx,
+                        mosaic_width=mosaic_width,
+                    )
                 elif m.time_mode == "sinusoidal" or m.time_mode == "fourier_learned":
-                    pred = self.model(delta_days, x_s2, y_s2)
+                    recon_prediction = self.model(
+                        delta_days,
+                        x_s2,
+                        y_s2,
+                        region_idx=region_idx,
+                        mosaic_width=mosaic_width,
+                    )
                 elif m.time_mode == "mlp":
                     time_features = torch.stack([delta_days, doy_sin, doy_cos], dim=1)  # (B, 3)
-                    pred = self.model(time_features, x_s2, y_s2)
+                    pred = self.model(
+                        time_features,
+                        x_s2,
+                        y_s2,
+                        region_idx=region_idx,
+                        mosaic_width=mosaic_width,
+                    )
                 
 
                 B = x_s2.size(0)  
 
-                predictions = pred.detach().float().cpu().numpy()  # (4, B, C, H, W)
+                recon_prediction = recon_prediction.detach().float().cpu().numpy()  # (4, B, C, H, W)
 
                 for ijk in range(min(10, B)):
 
-                    s2_img_predicted = predictions[ijk]
+                    s2_img_predicted = recon_prediction[ijk]
                     fig, ax = plt.subplots(1,2, figsize=(15, 10))
 
                     gt_np = s2data[ijk].detach().float().cpu().numpy()

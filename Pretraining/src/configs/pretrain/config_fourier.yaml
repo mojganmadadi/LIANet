@@ -10,22 +10,21 @@ hydra:
   run:  
     dir: .
 
-gpus: [0, 1, 2, 3, 4, 5, 7]  # List of GPU ids to use, empty list means CPU
+gpus: [0, 1, 2, 3, 4, 5, 6, 7]  # List of GPU ids to use, empty list means CPU
 seed: 44
 deterministic: True
 benchmark: False
 
-nEpochs: 1600
+nEpochs: 300 #1600
 temporal_embedding_mode: "fourier_learned"
 # where to store results
 outputpath: "/home/user/results_shared"
-experimentname: ${temporal_embedding_mode}_2tile_alltimes_USA_available
+experimentname: None #${temporal_embedding_mode}_T31TFJ_CRHead
 
-validation_epochs: 10 # Which epochs to run validation
-special_save_Epochs: [100,200,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600] # Which chechpoints to save permanently, given as a list
-num_channels: 12 # Sentinel-2 has 12 channels
-complete_tile_size: 20982  # A0 =5000, A+=7071, A++=10980 (pixels)
-
+validation_epochs: 1 # Which epochs to run validation
+# special_save_Epochs: [50, 100,200,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600] # Which chechpoints to save permanently, given as a list
+special_save_Epochs: [50, 100,200,300,] # Which chechpoints to save permanently, given as a list  
+region_list: None #{0: ["T31TFJ"]}
 
 trainroutine:
   _target_: "trainroutines.pretraining.LIANetTrainer"
@@ -42,12 +41,14 @@ model:
   growth: 2
   table_size: 524288 # 2^19
   feat_dim: 128
-  complete_tile_size: 20982 # Sentinel-2 max tile size for two adjacent tiles
+  # complete_tile_size: 20982 # Sentinel-2 max tile size for two adjacent tiles
   resunet_backbone_size: "small"
   bilinear: True
-  out_channels: ${num_channels}
+  out_channels: 12
   preproj_channels: 128
   hash_vectorized: True
+  num_regions: 1
+
 
 lossfunction:
   _target_: torch.nn.L1Loss
@@ -65,28 +66,24 @@ scheduler:
 dataset_train: 
   _target_: "dataset.LIANetPretrainingDataset"
   iterations_per_epoch: 1024000
-  topdir_dataset: "/home/user/data_local/extended_area_experiment_data"
+  topdir_dataset: "/home/user/data_shared"
   image_size: 128
-  complete_tile_size: ${complete_tile_size}
-  tile_names: ["T16TEK", "T16TFK"]
-  # tile_names: ["T32ULU"]
-  # tile_names: ["T32UPU", "T32UQU"]
+  region_list: ${region_list}
   time_sampling: "available"
 
 
 dataset_plot:
   _target_: "dataset.LIANetPretrainingPlotterDataset"
   iterations_per_epoch: 512
-  topdir_dataset: "/home/user/data_local/extended_area_experiment_data"
+  topdir_dataset: "/home/user/data_shared"
   image_size: 128
-  complete_tile_size: ${complete_tile_size}
-  tile_names: ["T16TEK", "T16TFK"]
-  time_sampling: "random_doy"
+  region_list: ${region_list}
+  time_sampling: "available"
 
 
 dataloader_train:
   _target_: "torch.utils.data.DataLoader"
-  batch_size: 64
+  batch_size: 32
   num_workers: 16
   drop_last: True
   pin_memory: True
@@ -96,7 +93,7 @@ dataloader_train:
 
 dataloader_plot:
   _target_: "torch.utils.data.DataLoader"
-  batch_size: 64
+  batch_size: 32
   num_workers: 16
   drop_last: True
   pin_memory: True

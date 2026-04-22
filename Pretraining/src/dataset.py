@@ -13,57 +13,57 @@ import math
 
 class LIANetPretrainingDataset(Dataset):
     def __init__(self, iterations_per_epoch, topdir_dataset, image_size, 
-                 complete_tile_size, tile_names, time_sampling="available"):
+                 region_list, time_sampling="available"):
         self.topdir_dataset = topdir_dataset
         assert os.path.isdir(topdir_dataset)
         self.iterations_per_epoch = iterations_per_epoch
         self.image_size = image_size
-        self.complete_tile_size = complete_tile_size
-        self.tile_names_list = tile_names
+        self.region_list = region_list
         self.time_sampling = time_sampling
         self.tiles = {}
         self.tile_files = {}
         self.tile_times = {}
         self.tile_years = {}
-        for tile_name in self.tile_names_list:
-            tile_dir = os.path.join(self.topdir_dataset, tile_name)
-            tif_files = os.listdir(tile_dir)
-            self.tiles[tile_name] = [f for f in tif_files if "bf" not in f.lower()]
-            valid_files = [f for f in self.tiles[tile_name] if f.endswith(".tif")]
-            self.tile_files[tile_name] = valid_files
-            times = []
-            for f in valid_files:
-                capture_time = os.path.splitext(os.path.basename(f))[0]
-                dt = datetime.strptime(capture_time, "%Y%m%dT%H%M%S")
-                times.append(int(dt.timestamp()))
-            self.tile_times[tile_name] = np.asarray(times, dtype=np.int64)
-            self.tile_years[tile_name] = np.asarray(
-                [datetime.utcfromtimestamp(t).year for t in self.tile_times[tile_name]],
-                dtype=np.int16
+        self.overlap_x = {}
+        self.mosaic_width = {}
+
+        
+                
+        times = []
+        for reg in self.region_list.keys():
+            for tile_name in self.region_list[reg]:
+                tif_files = glob.glob(os.path.join(self.topdir_dataset, tile_name, "*"))
+                tif_files = [f for f in tif_files if "bf" not in f.lower() and f.endswith(".tif")]
+                self.tiles[reg,tile_name] = tif_files
+                for f in tif_files:
+                    capture_time = os.path.splitext(os.path.basename(f))[0]
+                    dt = datetime.strptime(capture_time, "%Y%m%dT%H%M%S")
+                    times.append(int(dt.timestamp()))
+                    self.tile_times[reg,tile_name] = np.asarray(times, dtype=np.int64)
+                    self.tile_years[reg,tile_name] = np.asarray(
+                        [datetime.utcfromtimestamp(t).year for t in self.tile_times[reg,tile_name]],
+                        dtype=np.int16
+                    )
+
+            self.single_tile_width = 10980
+            self.overlap_x[reg] = self._compute_overlap_x(reg)
+            self.mosaic_width[reg] = (
+                self.single_tile_width * len(self.region_list[reg])
+                - self.overlap_x[reg] * (len(self.region_list[reg]) - 1)
             )
 
-        self.single_tile_width = 10980
-        self.overlap_x = self._compute_overlap_x()
-        self.mosaic_width = (
-            self.single_tile_width * len(self.tile_names_list)
-            - self.overlap_x * (len(self.tile_names_list) - 1)
-        )
-
-    def _compute_overlap_x(self) -> int:
-        if len(self.tile_names_list) < 2:
+    #TODO: this implementation only computes the overlap for two adjacent tiles
+    def _compute_overlap_x(self, reg) -> int:
+        if len(self.region_list[reg]) < 2:
             return 0
 
+        assert len(self.region_list[reg]) == 2, "Overlap computation currently only supports exactly 2 tiles per region."
         # Use the first valid .tif from each tile to compute horizontal overlap.
         sample_paths = []
-        for tile_name in self.tile_names_list[:2]:
-            candidates = [
-                f for f in self.tiles[tile_name]
-                if f.endswith(".tif") and "bf" not in f.lower()
-            ]
-            if not candidates:
-                raise ValueError(f"No valid .tif files found for tile {tile_name}")
-            sample_paths.append(os.path.join(self.topdir_dataset, tile_name, candidates[0]))
+        for tile_name in self.region_list[reg]:
+            sample_paths.append(self.tiles[reg,tile_name][0])
 
+        assert len(sample_paths) == 2, "Overlap computation currently only supports exactly 2 tiles per region."
         with rio.open(sample_paths[0]) as s1, rio.open(sample_paths[1]) as s2:
             ref_crs = s1.crs
             if ref_crs is None or s2.crs is None:
@@ -82,8 +82,8 @@ class LIANetPretrainingDataset(Dataset):
             return int(round(overlap_m / pixel_size_x))
 
     def _rand_xy(self):
-        x0 = np.random.choice(np.arange(0, self.complete_tile_size , dtype=int))
-        y0 = np.random.choice(np.arange(0, self.complete_tile_size , dtype=int))
+        x0 = np.random.choice(np.arange(0, self.single_tile_width , dtype=int))
+        y0 = np.random.choice(np.arange(0, self.single_tile_width , dtype=int))
         return x0,y0
     
     def _get_dt_properties(self, time_idx, valid_tiles):
@@ -104,13 +104,12 @@ class LIANetPretrainingDataset(Dataset):
 
         return {"file_name": s2_file_name,"delta_days": delta, "doy_sin": doy_sin, "doy_cos": doy_cos,}
 
-    def _select_time_idx(self, tile_name):
-        valid_tiles = self.tile_files[tile_name]
+    def _select_time_idx(self, reg_indx, tile_name):
         if self.time_sampling == "available":
-            return np.random.randint(0, len(valid_tiles))
+            return np.random.randint(0, len(self.tiles[reg_indx,tile_name]))
         if self.time_sampling == "random_doy":
-            times = self.tile_times[tile_name]
-            year = int(np.random.choice(self.tile_years[tile_name]))
+            times = self.tile_times[reg_indx,tile_name]
+            year = int(np.random.choice(self.tile_years[reg_indx,tile_name]))
             doy = int(np.random.randint(1, 366))
             target_dt = datetime(year, 1, 1) + timedelta(days=doy - 1)
             target_ts = int(target_dt.timestamp())
@@ -119,37 +118,40 @@ class LIANetPretrainingDataset(Dataset):
 
     def __getitem__(self, i):
 
-        # select a random tile index
-        tile_idx = np.random.randint(0, len(self.tile_names_list)) #TODO: add weights based on number of files per tile
-        tile_name = self.tile_names_list[tile_idx]
-        # excluding 2024 from training set and selecting a random time index from the rest 
-        # valid_tiles = [f for f in self.tiles[tile_name] 
-        #     if f.endswith(".tif") and not f.startswith("2024")
-        # ]
-        valid_tiles = self.tile_files[tile_name]
-        time_idx = self._select_time_idx(tile_name)
-        dt_properties = self._get_dt_properties(time_idx, valid_tiles)
+        # select a random region
+        number_of_possible_regions = len(self.region_list.keys())
+        random_reg_indx = np.random.randint(0, number_of_possible_regions)
 
-        # select a random spatial location
+        # Out of those regions, we select a random tile
+        possible_tile_names = self.region_list[random_reg_indx]
+        random_tile_idx = np.random.randint(0, len(possible_tile_names))
+        random_tile_name = possible_tile_names[random_tile_idx]
+
+        time_idx = self._select_time_idx(random_reg_indx, random_tile_name)
+        dt_properties = self._get_dt_properties(
+            time_idx,
+            self.tiles[random_reg_indx, random_tile_name])
+
+        # select a random spatial location this is always between 0 to 10980
         x0, y0 = self._rand_xy()
-        # Use it in image space
+        # Use it in image space, condition to have the patch fully contained
         x0_img = self.single_tile_width - self.image_size if x0 > self.single_tile_width - self.image_size else x0
         y0_img = self.single_tile_width - self.image_size if y0 > self.single_tile_width - self.image_size else y0
         window = rio.windows.Window(col_off=x0_img, row_off=y0_img,
                                     width=self.image_size, height=self.image_size)
-        s2_path = glob.glob(os.path.join(self.topdir_dataset, tile_name ,f"{dt_properties['file_name']}"))
+        s2_path = glob.glob(os.path.join(self.topdir_dataset, random_tile_name ,f"{dt_properties['file_name']}"))
         assert len(s2_path) == 1
         s2_path = s2_path[0]
         with rio.open(s2_path) as src:
             patch = src.read(window=window)
         patch = _preprocess_S2(patch)
 
-        x_offset = tile_idx * (self.single_tile_width - self.overlap_x)  # 0 for first tile, 9996 for second
+        x_offset = random_tile_idx * (self.single_tile_width - self.overlap_x[random_reg_indx])  # 0 for first tile, 9996 for second
         x0_latent = x_offset + x0_img
         y0_latent = y0_img
 
         # clamp so the whole patch stays inside mosaic
-        x0_latent = min(x0_latent, self.mosaic_width - self.image_size)
+        x0_latent = min(x0_latent, self.mosaic_width[random_reg_indx] - self.image_size)
         y0_latent = min(y0_latent, self.single_tile_width - self.image_size)
 
         return {
@@ -161,8 +163,10 @@ class LIANetPretrainingDataset(Dataset):
             "y_s2": y0_latent,
             "x_s2_img": x0_img,
             "y_s2_img": y0_img,
-            "tile_name": tile_name,
-            "s2data": patch
+            "reg_indx": random_reg_indx,
+            "tile_name": random_tile_name,
+            "s2data": patch,
+            "mosaic_width": self.mosaic_width[random_reg_indx]
         }
 
     def __len__(self): return self.iterations_per_epoch
@@ -172,16 +176,19 @@ class LIANetPretrainingPlotterDataset(LIANetPretrainingDataset):
 
     def __getitem__(self, i):
 
-        # select a random tile index
-        tile_idx = np.random.randint(0, len(self.tile_names_list)) #TODO: add weights based on number of files per tile
-        tile_name = self.tile_names_list[tile_idx]
-        # excluding 2024 from training set and selecting a random time index from the rest 
-        # valid_tiles = [f for f in self.tiles[tile_name] 
-        #     if f.endswith(".tif") and f.startswith("2024")
-        # ]
-        valid_tiles = self.tile_files[tile_name]
-        time_idx = self._select_time_idx(tile_name)
-        dt_properties = self._get_dt_properties(time_idx, valid_tiles)
+                # select a random region
+        number_of_possible_regions = len(self.region_list.keys())
+        random_reg_indx = np.random.randint(0, number_of_possible_regions)
+
+        # Out of those regions, we select a random tile
+        possible_tile_names = self.region_list[random_reg_indx]
+        random_tile_idx = np.random.randint(0, len(possible_tile_names))
+        random_tile_name = possible_tile_names[random_tile_idx]
+        
+        time_idx = self._select_time_idx(random_reg_indx, random_tile_name)
+        dt_properties = self._get_dt_properties(
+            time_idx,
+            self.tiles[random_reg_indx, random_tile_name])
 
         # select a random spatial location
         x0, y0 = self._rand_xy()
@@ -190,43 +197,45 @@ class LIANetPretrainingPlotterDataset(LIANetPretrainingDataset):
         y0_img = self.single_tile_width - self.image_size if y0 > self.single_tile_width - self.image_size else y0
         window = rio.windows.Window(col_off=x0_img, row_off=y0_img,
                                     width=self.image_size, height=self.image_size)
-        s2_path = glob.glob(os.path.join(self.topdir_dataset, tile_name ,f"{dt_properties['file_name']}"))
+        s2_path = glob.glob(os.path.join(self.topdir_dataset, random_tile_name ,f"{dt_properties['file_name']}"))
         assert len(s2_path) == 1
         s2_path = s2_path[0]
         with rio.open(s2_path) as src:
             patch = src.read(window=window)
         patch = _preprocess_S2(patch)
 
-        x_offset = tile_idx * (self.single_tile_width - self.overlap_x)  # 0 for first tile, 9996 for second
+        x_offset = random_tile_idx * (self.single_tile_width - self.overlap_x[random_reg_indx])  # 0 for first tile, 9996 for second
         x0_latent = x_offset + x0_img
         y0_latent = y0_img
 
         # clamp so the whole patch stays inside mosaic
-        x0_latent = min(x0_latent, self.mosaic_width - self.image_size)
+        x0_latent = min(x0_latent, self.mosaic_width[random_reg_indx] - self.image_size)
         y0_latent = min(y0_latent, self.single_tile_width - self.image_size)
 
         return {
             "delta_days": torch.tensor(dt_properties["delta_days"], dtype=torch.float32),
             "time_idx": torch.tensor(time_idx, dtype=torch.int32),
-            "date_str": valid_tiles[time_idx],
+            "date_str": dt_properties["file_name"],
             "doy_sin": torch.tensor(dt_properties["doy_sin"], dtype=torch.float32),
             "doy_cos": torch.tensor(dt_properties["doy_cos"], dtype=torch.float32),
             "x_s2": x0_latent,
             "y_s2": y0_latent,
             "x_s2_img": x0_img,
             "y_s2_img": y0_img,
-            "tile_name": tile_name,
-            "s2data": patch
+            "reg_indx": random_reg_indx,
+            "tile_name": random_tile_name,
+            "s2data": patch,
+            "mosaic_width": self.mosaic_width[random_reg_indx]
+
         }
 
     def __len__(self): return self.iterations_per_epoch
 
 if __name__ == "__main__":
-    dataset = LIANetPretrainingDataset(iterations_per_epoch=1000,
+    dataset = LIANetPretrainingPlotterDataset(iterations_per_epoch=1000,
                              topdir_dataset="/home/user/data_shared",
                              image_size=128,
-                             complete_tile_size=10980,
-                            tile_names=["T32ULU"]
+                            region_list={0: ["T16TEK", "T16TFK"], 1: ["T32ULU"]}
 )
     i = dataset[0]
     print(dataset.mosaic_width)

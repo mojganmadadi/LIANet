@@ -6,7 +6,7 @@ from omegaconf import OmegaConf
 from utils import dice_loss_with_logits
 from settings import * 
 
-@main(config_path="configs", config_name="BurnScars_LIANet")
+@main(config_path="configs", config_name="PASTIS_LIANet")
 def main_cfg(args: DictConfig):
     # only one visible device
     import os
@@ -87,7 +87,7 @@ def main_cfg(args: DictConfig):
         train_area_bounds=args.train_area_bounds,
         COMPLETE_TILESIZE=COMPLETE_TILESIZE,
         exclude_px1_px2=(args.exclude_px1, args.exclude_px2) if args.task == "building_footprints" else None,
-        val_folds=args.val_folds if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU"] else None,
+        val_folds=args.val_folds if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU", "PASTIS_T30UXV", "PASTIS_T31TFJ"] else None,
     )
 
 
@@ -141,7 +141,7 @@ def main_cfg(args: DictConfig):
     elif args.lossfunction == "cross_entropy":  
         if args.weightedSegmentation == False:
             # bce = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([5.0], device='cuda'))
-            if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU"]:
+            if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU", "PASTIS_T30UXV", "PASTIS_T31TFJ"]:
                 criterion = torch.nn.CrossEntropyLoss(ignore_index=255)
             else: criterion = torch.nn.CrossEntropyLoss()
             
@@ -172,7 +172,7 @@ def main_cfg(args: DictConfig):
     else:  # segmentation
         list_of_metrics, maximize_list = multiclass_segmentation_metrics(
             num_classes=num_classes[args.task],
-            ignore_index=255 if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU"] else None
+            ignore_index=255 if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU", "PASTIS_T30UXV", "PASTIS_T31TFJ"] else None
         )
 
     metrics = MetricCollection(list_of_metrics).cuda()
@@ -187,7 +187,7 @@ def main_cfg(args: DictConfig):
 
     # ================= TRAINING LOOP HELPER FUNCTION =================
 
-    def forward_model(model, model_type, batch):
+    def forward_model(model, model_type, batch, region_idx):
 
         # EITHER: classicl model like unet or so
         if args.model_type in ["unet", "micro_unet"]:
@@ -216,8 +216,7 @@ def main_cfg(args: DictConfig):
             label = label.cuda()
             
             assert timestamp.ndim == x_s2.ndim == y_s2.ndim == 1
-            
-            reconstruction, outputs = model(timestamp, x_s2, y_s2)
+            reconstruction, outputs = model(timestamp, x_s2, y_s2, region_idx)
 
         return reconstruction, outputs, label
 
@@ -236,8 +235,9 @@ def main_cfg(args: DictConfig):
         for batch in tqdm(training_dataloader,total=len(training_dataloader),desc=f"Epoch {epoch+1}/{args.epochs} - Training"):
 
             optimizer.zero_grad()
-
-            _ , outputs, label = forward_model(model, args.model_type, batch)
+            # region_list: {0: ["T31TFJ"], 1: ["T32ULU"], 2: ["T31TFM"], 3: ["T30UXV"]}
+            region_idx = 0 if args.task == "PASTIS_T31TFJ" else 1 if args.task == "PASTIS_T32ULU" else 2 if args.task == "PASTIS_T31TFM" else 3
+            _ , outputs, label = forward_model(model, args.model_type, batch, region_idx)
             if not torch.isfinite(outputs).all().item():
                 print("Non-finite outputs")
                 break
@@ -276,7 +276,7 @@ def main_cfg(args: DictConfig):
             with torch.no_grad():
                 for batch in tqdm(validation_dataloader,total=len(validation_dataloader),desc=f"Epoch {epoch+1}/{args.epochs} - Validation"):
 
-                    _ , outputs, label = forward_model(model, args.model_type, batch)
+                    _ , outputs, label = forward_model(model, args.model_type, batch, region_idx)
 
                     metrictracker.update(outputs, label)
 
@@ -316,7 +316,7 @@ def main_cfg(args: DictConfig):
                                 "#1B5E20",  # 2 - needleleaf (dark green)
                                 ]
                         vvmin, vvmax = 0, 2
-                    elif args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU"]:
+                    elif args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU", "PASTIS_T30UXV", "PASTIS_T31TFJ"]:
                         colors = [
                                 (0, 0, 0),
                                 (0.6823529411764706, 0.7803921568627451, 0.9098039215686274),
@@ -351,7 +351,7 @@ def main_cfg(args: DictConfig):
                 counter = 0
                 for batch in tqdm(validation_dataloader,total=10,desc=f"Epoch {epoch+1}/{args.epochs} - Plotting"):
                     
-                    reconstruction, outputs, label = forward_model(model, args.model_type, batch)  
+                    reconstruction, outputs, label = forward_model(model, args.model_type, batch, region_idx)  
 
                     if args.model_type in ["unet", "micro_unet"]:
                         reconstruction = torch.zeros_like(batch["s2data"])

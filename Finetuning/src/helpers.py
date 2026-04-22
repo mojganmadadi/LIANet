@@ -1,7 +1,7 @@
 import os
 
 from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster, PASTIS, BurnScars
-from models.models_finetune import DownstreamModel, UNet, MicroUNet
+from models.models_finetune import DownstreamModel, UNet, MicroUNet, DownstreamModel_CRHead
 
 
 import numpy as np
@@ -159,7 +159,7 @@ def load_train_eval_datasets(
             train_val_key="val",
             complete_tile_size=COMPLETE_TILESIZE,
         )
-    elif task == "PASTIS_T32ULU" or task == "PASTIS_T31TFM":
+    elif task == "PASTIS_T32ULU" or task == "PASTIS_T31TFM" or task == "PASTIS_T30UXV" or task == "PASTIS_T31TFJ":
         train_ds = PASTIS(
             top_dir=TOP_DIR,
             s2_tiles=S2_TILES,
@@ -203,12 +203,12 @@ def load_model_class(
             if not model_type == "replace_final_block_4x":
                 raise ValueError("Footprint classification must be run with 4x model")
         
-        model = DownstreamModel(
+        model = DownstreamModel_CRHead(
             model_path=MODEL_PATH,
             checkpoint_path_relative="model_checkpoints/latest_validation_checkpoint.pt",
-            adaption_strategy=model_type,
+            # adaption_strategy=model_type,
             num_classes=NUM_CLASSES,
-            activation=ACTIVATION_FUNCTION,
+            # activation=ACTIVATION_FUNCTION,
         )
 
     elif model_type == "unet":

@@ -644,6 +644,7 @@ class PASTIS(Dataset):
                                 "label": label_patch,  # (128,128) uint8 with values {0,1}
                                 })
                     else: continue
+        print(f"Found {len(self.samples)} samples for {train_val_key} with >0% burned area")
         np.random.shuffle(self.samples)
 
     def __len__(self):

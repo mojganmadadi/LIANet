@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from models.ResUNet import ResUNet
 from models.utils import _fast_hash_2d, group_norm
-from models.Unet import UNet
+# from models.Unet import UNet
 
 class HashTableEncoder2D(nn.Module):
     """
@@ -107,7 +107,8 @@ class HashTableEncoder2D(nn.Module):
         else:
             scales = (self.level_N_f / float(mosaic_width)).view(1, L, 1)  # [1, L, 1]
 
-        TL = self.tables[region_idx]   # [B, T, F]
+        TL = self.tables[region_idx]   # [T, F]
+        TL = TL.unsqueeze(0).expand(B, -1, -1)  # [B, T, F]
 
         if self.vectorized:
             # --- broadcast coords to [B, L, N] ---
@@ -447,7 +448,6 @@ class LIANetLight(nn.Module):
         else:
             raise ValueError("final_activation must be 'ReLU' or None/'none'")
 
-
     @torch.cuda.amp.autocast(True)
     def forward(self,
                 timestamps: torch.Tensor,  # [B]
@@ -459,7 +459,7 @@ class LIANetLight(nn.Module):
                 ):
         """
         Forward pass: spatial encoding + temporal embedding + CNN head.
-        Returns: ([B, out_channels, H, W], [B, 1, H, W]) - main output and segmentation
+        Returns: [B, out_channels, H, W]
 
         timestamps:
           - time_mode='index':       Long [B] with values in [0, timestamp_dim)
@@ -490,4 +490,4 @@ class LIANetLight(nn.Module):
         x = self.preproj(enc) # [B, preproj_channels or enc_ch, H, W]
         y = self.light_head(x) # [B, num_channels_last_layer, H, W]
         y = self.final_layer(y) # [B, out_channels, H, W]
-        return self.out_act(y)
+        return self.out_act(y) # [B, out_channels, H, W]

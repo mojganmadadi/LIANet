@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from models.ResUNet import ResUNet
 from models.utils import _fast_hash_2d, group_norm
-from models.Unet import UNet
+# from models.Unet import UNet
 
 class HashTableEncoder2D(nn.Module):
     """
@@ -17,8 +17,7 @@ class HashTableEncoder2D(nn.Module):
                  feat_dim: int,
                  bilinear: bool = True,
                  vectorized: bool = True,
-                 table_dtype=torch.float32,
-                 num_regions: int = 1):
+                 table_dtype=torch.float32):
         super().__init__()
         self.levels = int(levels)
         self.n_min = int(n_min)
@@ -28,7 +27,7 @@ class HashTableEncoder2D(nn.Module):
         self.vectorized = bool(vectorized)
         self.bilinear = bool(bilinear)
 
-        tables = torch.empty(num_regions, self.table_size, self.feat_dim, dtype=table_dtype)
+        tables = torch.empty(self.table_size, self.feat_dim, dtype=table_dtype)
         nn.init.uniform_(tables, a=-1e-2, b=1e-2)
         self.tables = nn.Parameter(tables)
 
@@ -67,15 +66,79 @@ class HashTableEncoder2D(nn.Module):
             self._cached_hw = H
         return self._base_xx, self._base_yy
 
+    # @torch.cuda.amp.autocast(True)
+    # def encode_grid_px_global_batched(self,
+    #                                   x0: torch.Tensor,      # [B]
+    #                                   y0: torch.Tensor,      # [B]
+    #                                   memorized_crop_size: int,
+    #                                   complete_tile_size: int,
+    #                                   ) -> torch.Tensor:
+    #     """
+    #     Encodes a batch of crops into multiscale feature maps.
+    #     Returns: [B, L*F, H, W]
+    #     """
+    #     B = x0.shape[0]
+    #     device = self.tables.device
 
+    #     xx, yy = self._get_base_grid(memorized_crop_size, device)
+    #     px = xx.unsqueeze(0) + x0.to(torch.float32).view(B, 1, 1)
+    #     py = yy.unsqueeze(0) + y0.to(torch.float32).view(B, 1, 1)
+
+    #     Npts = memorized_crop_size * memorized_crop_size
+    #     pxf = px.reshape(B, Npts)
+    #     pyf = py.reshape(B, Npts)
+
+    #     feats = []
+    #     for l in range(self.levels):
+    #         Nl = self.level_N[l]
+    #         scale = float(Nl) / float(complete_tile_size)
+    #         seed_l = self.seeds[l]
+
+    #         # Scale coords to level resolution
+    #         xyn_x = pxf * scale
+    #         xyn_y = pyf * scale
+
+    #         # Integer/fractional parts for bilinear interpolation
+    #         ix0 = torch.floor(xyn_x).to(torch.int64)
+    #         iy0 = torch.floor(xyn_y).to(torch.int64)
+    #         ix1, iy1 = ix0 + 1, iy0 + 1
+
+    #         fx = (xyn_x - ix0.to(torch.float32)).unsqueeze(-1)
+    #         fy = (xyn_y - iy0.to(torch.float32)).unsqueeze(-1)
+
+    #         # Hash grid lookup (4 corners per pixel)
+    #         idx00 = _fast_hash_2d(ix0, iy0, seed_l, self.table_size)
+    #         idx10 = _fast_hash_2d(ix1, iy0, seed_l, self.table_size)
+    #         idx01 = _fast_hash_2d(ix0, iy1, seed_l, self.table_size)
+    #         idx11 = _fast_hash_2d(ix1, iy1, seed_l, self.table_size)
+
+    #         # TL = self.tables[l, :, :]  # table for this level
+    #         TL = self.tables  # shared table for all levels
+
+    #         # Gather feature vectors and interpolate
+    #         f00, f10 = TL[idx00], TL[idx10]
+    #         f01, f11 = TL[idx01], TL[idx11]
+
+    #         w00 = (1.0 - fx) * (1.0 - fy)
+    #         w10 =  fx        * (1.0 - fy)
+    #         w01 = (1.0 - fx) *  fy
+    #         w11 =  fx        *  fy
+
+    #         enc_l = (w00 * f00 + w10 * f10 + w01 * f01 + w11 * f11)
+    #         feats.append(enc_l)
+        
+    #     # Concatenate features across levels
+    #     enc = torch.cat(feats, dim=-1)  # [B, N, L*F]
+    #     C = enc.shape[-1]
+    #     enc = enc.view(B, memorized_crop_size, memorized_crop_size, C).permute(0, 3, 1, 2)
+    #     return enc.contiguous()
     @torch.cuda.amp.autocast(True)
     def encode_grid_px_global_batched(
         self,
         x0: torch.Tensor,      # [B]
         y0: torch.Tensor,      # [B]
         memorized_crop_size: int,
-        mosaic_width: torch.Tensor | int,
-        region_idx: torch.Tensor,
+        complete_tile_size: int,
     ) -> torch.Tensor:
         """
         Vectorized over levels.
@@ -100,20 +163,16 @@ class HashTableEncoder2D(nn.Module):
         pyf = py.reshape(B, N)  # [B, N]
 
         # --- scales per level: [L] float32 ---
-        # scale = Nl / mosaic_width
-        if torch.is_tensor(mosaic_width):
-            mosaic_width = mosaic_width.to(device=device, dtype=torch.float32).view(B, 1, 1)
-            scales = self.level_N_f.view(1, L, 1) / mosaic_width  # [B, L, 1]
-        else:
-            scales = (self.level_N_f / float(mosaic_width)).view(1, L, 1)  # [1, L, 1]
+        # scale = Nl / complete_tile_size
+        scales = (self.level_N_f / float(complete_tile_size))  # [L]
 
-        TL = self.tables[region_idx]   # [B, T, F]
+        TL = self.tables  # [T, F]
 
         if self.vectorized:
             # --- broadcast coords to [B, L, N] ---
             # xyn_x[b,l,n] = pxf[b,n] * scales[l]
-            xyn_x = pxf[:, None, :] * scales  # [B, L, N]
-            xyn_y = pyf[:, None, :] * scales  # [B, L, N]
+            xyn_x = pxf[:, None, :] * scales[None, :, None]  # [B, L, N]
+            xyn_y = pyf[:, None, :] * scales[None, :, None]  # [B, L, N]
 
             # integer/fractional parts
             ix0 = torch.floor(xyn_x).to(torch.int64)  # [B, L, N]
@@ -126,39 +185,45 @@ class HashTableEncoder2D(nn.Module):
             # --- seeds per level, broadcast to [B, L, N] ---
             seed_bln = self.seeds[None, :, None].expand(B, L, N)  # [B, L, N]
 
-            # flatten everything to 1D for hashing
+            # flatten everything to 1D for hashing + indexing
             ix0f = ix0.reshape(-1)
             iy0f = iy0.reshape(-1)
             ix1f = ix1.reshape(-1)
             iy1f = iy1.reshape(-1)
             seedf = seed_bln.reshape(-1)
 
-            # hash indices then reshape per sample for batched table gather
-            idx00 = _fast_hash_2d(ix0f, iy0f, seedf, self.table_size).view(B, -1)
-            idx10 = _fast_hash_2d(ix1f, iy0f, seedf, self.table_size).view(B, -1)
-            idx01 = _fast_hash_2d(ix0f, iy1f, seedf, self.table_size).view(B, -1)
-            idx11 = _fast_hash_2d(ix1f, iy1f, seedf, self.table_size).view(B, -1)
+            # hash indices (flattened): [B*L*N]
+            idx00 = _fast_hash_2d(ix0f, iy0f, seedf, self.table_size)
+            idx10 = _fast_hash_2d(ix1f, iy0f, seedf, self.table_size)
+            idx01 = _fast_hash_2d(ix0f, iy1f, seedf, self.table_size)
+            idx11 = _fast_hash_2d(ix1f, iy1f, seedf, self.table_size)
 
-            gather_shape = (-1, -1, F)
-            f00 = torch.gather(TL, 1, idx00.unsqueeze(-1).expand(*gather_shape)).view(B, L, N, F)
-            f10 = torch.gather(TL, 1, idx10.unsqueeze(-1).expand(*gather_shape)).view(B, L, N, F)
-            f01 = torch.gather(TL, 1, idx01.unsqueeze(-1).expand(*gather_shape)).view(B, L, N, F)
-            f11 = torch.gather(TL, 1, idx11.unsqueeze(-1).expand(*gather_shape)).view(B, L, N, F)
+            # gather features: [BLN, F]
+            f00 = TL[idx00]
+            f10 = TL[idx10]
+            f01 = TL[idx01]
+            f11 = TL[idx11]
 
             if self.bilinear:
                 # reshape weights to match gathered features
-                w00 = (1.0 - fx) * (1.0 - fy)
-                w10 = fx * (1.0 - fy)
-                w01 = (1.0 - fx) * fy
-                w11 = fx * fy
+                fx_f = fx.reshape(-1, 1)  # [BLN, 1]
+                fy_f = fy.reshape(-1, 1)  # [BLN, 1]
 
-                enc = w00 * f00 + w10 * f10 + w01 * f01 + w11 * f11  # [B, L, N, F]
+                w00 = (1.0 - fx_f) * (1.0 - fy_f)
+                w10 = fx_f * (1.0 - fy_f)
+                w01 = (1.0 - fx_f) * fy_f
+                w11 = fx_f * fy_f
+
+                enc_flat = (w00 * f00 + w10 * f10 + w01 * f01 + w11 * f11)  # [BLN, F]
             else:
-                enc = 0.25 * (f00 + f10 + f01 + f11)  # [B, L, N, F]
+                enc_flat = 0.25 * (f00 + f10 + f01 + f11)  # [BLN, F]
+
+            # unflatten back to [B, L, N, F]
+            enc = enc_flat.view(B, L, N, F)
         else:
             feats = []
             for l in range(L):
-                scale = scales[:, l, :]
+                scale = scales[l]
                 xyn_x = pxf * scale  # [B, N]
                 xyn_y = pyf * scale  # [B, N]
 
@@ -173,14 +238,10 @@ class HashTableEncoder2D(nn.Module):
                 idx01 = _fast_hash_2d(ix0, iy1, seed_l, self.table_size)
                 idx11 = _fast_hash_2d(ix1, iy1, seed_l, self.table_size)
 
-                idx00 = idx00.view(B, -1)
-                idx10 = idx10.view(B, -1)
-                idx01 = idx01.view(B, -1)
-                idx11 = idx11.view(B, -1)
-                f00 = torch.gather(TL, 1, idx00.unsqueeze(-1).expand(-1, -1, F))
-                f10 = torch.gather(TL, 1, idx10.unsqueeze(-1).expand(-1, -1, F))
-                f01 = torch.gather(TL, 1, idx01.unsqueeze(-1).expand(-1, -1, F))
-                f11 = torch.gather(TL, 1, idx11.unsqueeze(-1).expand(-1, -1, F))
+                f00 = TL[idx00]
+                f10 = TL[idx10]
+                f01 = TL[idx01]
+                f11 = TL[idx11]
                 feats.append(0.25 * (f00 + f10 + f01 + f11))  # [B, N, F]
 
             enc = torch.cat(feats, dim=-1)
@@ -363,23 +424,25 @@ class LIANetLight(nn.Module):
                  growth: float,
                  table_size: int,
                  feat_dim: int,
+                 complete_tile_size: int,
                  out_channels: int,
                  preproj_channels: int | None, 
                  resunet_backbone_size: str = "small",
                  bilinear: bool = True,
                  hash_vectorized: bool = True,
                  final_activation: str = None,
-                 n_blocks=3,
-                 num_regions: int = 1):
+                 n_blocks: int = 3
+                 ):
         super().__init__()
 
+        self.complete_tile_size = complete_tile_size
         self.time_mode = time_mode
-        self.num_blocks = n_blocks
+        self.n_blocks = n_blocks
+
         self.encoder = HashTableEncoder2D(
             levels=levels, n_min=n_min, growth=growth,
-            table_size=table_size, feat_dim=feat_dim,  bilinear=bilinear, vectorized=hash_vectorized,
-            table_dtype=torch.float32,
-            num_regions=num_regions,  # can be >1 if we want separate tables for different regions (not implemented yet
+            table_size=table_size, feat_dim=feat_dim, vectorized=hash_vectorized,
+            table_dtype=torch.float32
         )
         enc_ch = self.encoder.out_dim  # = levels * feat_dim
         # Learnable temporal embedding (discrete timestamps)
@@ -429,7 +492,7 @@ class LIANetLight(nn.Module):
             resunet_in = enc_ch
 
         # self.light_head = ResUNet(in_channels=resunet_in, encoder_type="resnet50", decoder_size="default", n_res_blocks=3)
-        self.light_head = LiteCNNHead(in_ch=resunet_in, out_ch=128, hidden=256, n_blocks=self.num_blocks)
+        self.light_head = LiteCNNHead(in_ch=resunet_in, out_ch=128, hidden=256, n_blocks=self.n_blocks)
         num_channels_last_layer = 128
 
         self.final_layer = nn.Sequential(
@@ -447,19 +510,16 @@ class LIANetLight(nn.Module):
         else:
             raise ValueError("final_activation must be 'ReLU' or None/'none'")
 
-
     @torch.cuda.amp.autocast(True)
     def forward(self,
                 timestamps: torch.Tensor,  # [B]
                 x0: torch.Tensor,          # [B]
                 y0: torch.Tensor,          # [B]
-                region_idx: int ,
                 memorized_crop_size: int = 128,
-                mosaic_width: int = 10980, 
                 ):
         """
         Forward pass: spatial encoding + temporal embedding + CNN head.
-        Returns: ([B, out_channels, H, W], [B, 1, H, W]) - main output and segmentation
+        Returns: [B, out_channels, H, W]
 
         timestamps:
           - time_mode='index':       Long [B] with values in [0, timestamp_dim)
@@ -472,11 +532,7 @@ class LIANetLight(nn.Module):
 
         # Hash-based spatial encoding
         enc = self.encoder.encode_grid_px_global_batched(
-            x0=x0, 
-            y0=y0, 
-            memorized_crop_size=memorized_crop_size, 
-            mosaic_width=mosaic_width,
-            region_idx=region_idx,
+            x0=x0, y0=y0, memorized_crop_size=memorized_crop_size, complete_tile_size=self.complete_tile_size
         )
 
                 # --- temporal encoding ---
@@ -490,4 +546,4 @@ class LIANetLight(nn.Module):
         x = self.preproj(enc) # [B, preproj_channels or enc_ch, H, W]
         y = self.light_head(x) # [B, num_channels_last_layer, H, W]
         y = self.final_layer(y) # [B, out_channels, H, W]
-        return self.out_act(y)
+        return self.out_act(y) # [B, out_channels, H, W]
