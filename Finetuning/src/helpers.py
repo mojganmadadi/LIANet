@@ -9,6 +9,22 @@ import numpy as np
 import rasterio
 from pathlib import Path
 
+def resolve_data_config(task, top_dirs, s2_tiles, labels, data_root=None):
+    """Resolve task data paths, optionally overriding the configured root."""
+    task_top_dir = top_dirs[task]
+    task_s2_tiles = s2_tiles[task]
+    task_labels = labels[task]
+
+    if data_root is None:
+        return task_top_dir, task_s2_tiles, task_labels
+
+    data_root = os.path.abspath(os.path.expanduser(data_root))
+    if isinstance(task_s2_tiles, str) and os.path.basename(data_root) == task_s2_tiles:
+        return os.path.dirname(data_root), task_s2_tiles, task_labels
+
+    return data_root, task_s2_tiles, task_labels
+
+
 def compute_mean_std(tile_paths):
     """
     Compute per-band mean and std over a list of stacked Sentinel-2 GeoTIFF tiles.

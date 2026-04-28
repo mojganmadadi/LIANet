@@ -17,7 +17,7 @@ def main_cfg(args: DictConfig):
     from torchinfo import summary
     from torch.utils.tensorboard import SummaryWriter
 
-    from helpers import load_train_eval_datasets, load_model_class
+    from helpers import load_train_eval_datasets, load_model_class, resolve_data_config
     from models.models_finetune import DownstreamModel, UNet, MicroUNet
 
     from utils import s2_to_rgb
@@ -37,7 +37,9 @@ def main_cfg(args: DictConfig):
     # ================= FIX SEED =================
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)   
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # ================= OPTIONAL CONSTANTS =================
 
     
@@ -62,6 +64,10 @@ def main_cfg(args: DictConfig):
         else: model_name = f"LIANet_full_tile_nonburned"
     elif args.model_type == "replace_final_block_4x":
         model_name = f"replace_final_block__{model_size_tag}_backbone"
+    elif args.model_type == "terratorch_factory":
+        backbone_name = args.terratorch.model_args.backbone
+        fold_tag = f"_valFolds{args.val_folds[0]}" if args.val_folds not in ["None", None] else ""
+        model_name = f"terratorch_{backbone_name}{fold_tag}"
     else:
         raise NotImplementedError("Model naming not implemented for this model type")
     
@@ -79,11 +85,20 @@ def main_cfg(args: DictConfig):
 
     # ================= LOAD DATASET =================
 
+    data_root = OmegaConf.select(args, "data_root", default=None)
+    data_top_dir, data_s2_tiles, data_labels = resolve_data_config(
+        task=args.task,
+        top_dirs=TOP_DIR,
+        s2_tiles=s2_tiles,
+        labels=labels,
+        data_root=data_root,
+    )
+
     train_ds, val_ds = load_train_eval_datasets(
         task=args.task,
-        TOP_DIR=TOP_DIR[args.task],
-        S2_TILES=s2_tiles[args.task],
-        LABELS=labels[args.task],
+        TOP_DIR=data_top_dir,
+        S2_TILES=data_s2_tiles,
+        LABELS=data_labels,
         train_area_bounds=args.train_area_bounds,
         COMPLETE_TILESIZE=COMPLETE_TILESIZE,
         exclude_px1_px2=(args.exclude_px1, args.exclude_px2) if args.task == "building_footprints" else None,
@@ -118,11 +133,12 @@ def main_cfg(args: DictConfig):
         model_type=args.model_type, 
         MODEL_PATH=models[args.checkpoint_area], 
         NUM_CLASSES=num_classes[args.task], 
-        ACTIVATION_FUNCTION=activation_functions[args.task])
+        ACTIVATION_FUNCTION=activation_functions[args.task],
+        TERRATORCH_CONFIG=args.get("terratorch", None))
     
     summary(model)
 
-    model = model.cuda()
+    model = model.to(device)
 
     # ================= LOSS FUNCTIONS, LR SCHEDULER AND OPTIMIZER =================
 
@@ -147,7 +163,7 @@ def main_cfg(args: DictConfig):
             
         else:
             class_weights = weights[args.task]
-            class_weights_tensor = torch.tensor(class_weights).cuda()
+            class_weights_tensor = torch.tensor(class_weights, device=device)
             criterion = torch.nn.CrossEntropyLoss(weight=class_weights_tensor)
         if not TASK_TYPE == "segmentation":
             raise ValueError("Cross Entropy loss can only be used for segmentation tasks")
@@ -175,7 +191,7 @@ def main_cfg(args: DictConfig):
             ignore_index=255 if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU", "PASTIS_T30UXV", "PASTIS_T31TFJ"] else None
         )
 
-    metrics = MetricCollection(list_of_metrics).cuda()
+    metrics = MetricCollection(list_of_metrics).to(device)
     metrictracker = MetricTracker(
         metrics,
         maximize=maximize_list,
@@ -190,13 +206,13 @@ def main_cfg(args: DictConfig):
     def forward_model(model, model_type, batch, region_idx):
 
         # EITHER: classicl model like unet or so
-        if args.model_type in ["unet", "micro_unet"]:
+        if args.model_type in ["unet", "micro_unet", "terratorch_factory"]:
             
             s2 = batch["s2data"]
             label = batch["label"]
 
-            s2 = s2.cuda()
-            label = label.cuda()    
+            s2 = s2.to(device)
+            label = label.to(device)
 
             outputs = model(s2)
 
@@ -210,10 +226,10 @@ def main_cfg(args: DictConfig):
             y_s2 = batch["y_s2"]
             label = batch["label"]
 
-            timestamp = timestamp.cuda()
-            x_s2 = x_s2.cuda()
-            y_s2 = y_s2.cuda()
-            label = label.cuda()
+            timestamp = timestamp.to(device)
+            x_s2 = x_s2.to(device)
+            y_s2 = y_s2.to(device)
+            label = label.to(device)
             
             assert timestamp.ndim == x_s2.ndim == y_s2.ndim == 1
             reconstruction, outputs = model(timestamp, x_s2, y_s2, region_idx)
