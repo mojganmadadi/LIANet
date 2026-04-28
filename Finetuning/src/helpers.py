@@ -2,6 +2,7 @@ import os
 
 from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster, PASTIS, BurnScars
 from models.models_finetune import DownstreamModel, UNet, MicroUNet, DownstreamModel_CRHead
+from models.terratorch_models import TerraTorchFactorySegmentationModel
 
 
 import numpy as np
@@ -196,7 +197,8 @@ def load_model_class(
     model_type, 
     MODEL_PATH, 
     NUM_CLASSES, 
-    ACTIVATION_FUNCTION):
+    ACTIVATION_FUNCTION,
+    TERRATORCH_CONFIG=None):
     if model_type in ["replace_final_block", "replace_final_block_4x"]:
         
         if task == "building_footprints_binary":
@@ -239,6 +241,12 @@ def load_model_class(
                             bilinear=True,
                             activation=ACTIVATION_FUNCTION,
                             upsample_4x=False)
+
+    elif model_type == "terratorch_factory":
+        model = TerraTorchFactorySegmentationModel(
+            config=TERRATORCH_CONFIG,
+            num_classes=NUM_CLASSES,
+        )
 
     else:
         raise ValueError("Invalid model_type")
