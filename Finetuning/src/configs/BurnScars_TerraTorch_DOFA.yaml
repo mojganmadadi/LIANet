@@ -1,0 +1,87 @@
+# TerraTorch EncoderDecoderFactory model inside the existing LIANet fine-tuning loop.
+defaults:
+  - _self_
+  - override hydra/hydra_logging: disabled
+  - override hydra/job_logging: disabled
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+seed: 42
+
+task: BurnScars
+model_type: terratorch_factory
+checkpoint_area: full_tile_modified_BurnScars
+train_area_bounds: none
+weightedSegmentation: False
+val_folds: None
+
+logging_directory: /home/user/results_local/finetuning_results
+labels_path: masks/BurnScars
+lossfunction: cross_entropy
+batchsize: 32
+learningrate: 0.00001
+num_workers: 8
+epochs: 50
+warmup_epochs: 0
+gpu_id: 0
+validate_every_n_epochs: 1
+plot_every_n_epochs: 1
+
+terratorch:
+  task: segmentation
+  dataset_bands:
+    - COASTAL_AEROSOL
+    - BLUE
+    - GREEN
+    - RED
+    - RED_EDGE_1
+    - RED_EDGE_2
+    - RED_EDGE_3
+    - NIR_BROAD
+    - NIR_NARROW
+    - WATER_VAPOR
+    - SWIR_1
+    - SWIR_2
+  model_bands:
+    - COASTAL_AEROSOL
+    - BLUE
+    - GREEN
+    - RED
+    - RED_EDGE_1
+    - RED_EDGE_2
+    - RED_EDGE_3
+    - NIR_BROAD
+    - NIR_NARROW
+    - WATER_VAPOR
+    - SWIR_1
+    - SWIR_2
+  normalization:
+    means: [0.1390458, 0.1503317, 0.1718197, 0.1853910, 0.2199100, 0.2779975, 0.2987011, 0.3083234, 0.3132220, 0.3162988, 0.2424884, 0.1857648]
+    stds: [0.2106761, 0.2141107, 0.2038973, 0.2134138, 0.2085321, 0.1889926, 0.1820257, 0.1871918, 0.1753829, 0.1797379, 0.1434261, 0.1334311]
+  model_args:
+    backbone: dofa_large_patch16_224
+    backbone_img_size: 128
+    backbone_pretrained: true
+    backbone_model_bands:
+      - COASTAL_AEROSOL
+      - BLUE
+      - GREEN
+      - RED
+      - RED_EDGE_1
+      - RED_EDGE_2
+      - RED_EDGE_3
+      - NIR_BROAD
+      - NIR_NARROW
+      - WATER_VAPOR
+      - SWIR_1
+      - SWIR_2
+    backbone_out_indices: [5, 11, 17, 23]
+    necks:
+      - name: ReshapeTokensToImage
+        remove_cls_token: true
+      - name: LearnedInterpolateToPyramidal
+    decoder: UNetDecoder
+    decoder_channels: [512, 256, 128, 64]
+    head_dropout: 0.1
