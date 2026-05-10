@@ -15,23 +15,23 @@ hydra:
 
 seed: 42
 
-task: PASTIS   
+task: PASTIS_joint_T31TFJ   
 model_type: unet
-checkpoint_area: "full_tile_modified_PASTIS_T11TFM"  # or full_tile_modified_PASTIS_T32ULU
+checkpoint_area: none  # or full_tile_modified_PASTIS_T32ULU
 train_area_bounds: none
 weightedSegmentation: False
 
 val_folds: [3]
 
-logging_directory: /home/user/results_local/finetuning_results
+logging_directory: /home/user/results_local/finetuning_results_hyperparameter_search
 labels_path: masks/PASTIS
 # deep learning related
 lossfunction: cross_entropy
-batchsize: 32
-learningrate: 0.0001
+batchsize: 16
+learningrate: 0.000003
 num_workers: 8
 epochs: 60
-warmup_epochs: 0
-gpu_id: 6
+warmup_epochs: 2
+gpu_id: 4
 validate_every_n_epochs: 2
 plot_every_n_epochs: 5

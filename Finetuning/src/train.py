@@ -1,12 +1,9 @@
-from cProfile import label
-from importlib.resources import path
 from hydra import main
 from omegaconf import DictConfig
 from omegaconf import OmegaConf
-from utils import dice_loss_with_logits
 from settings import * 
 
-@main(config_path="configs", config_name="PASTIS_LIANet")
+@main(config_path="configs", config_name="BF_reg_LIANet")
 def main_cfg(args: DictConfig):
     # only one visible device
     import os
@@ -17,13 +14,11 @@ def main_cfg(args: DictConfig):
     from torchinfo import summary
     from torch.utils.tensorboard import SummaryWriter
 
-    from helpers import load_train_eval_datasets, load_model_class
-    from models.models_finetune import DownstreamModel, UNet, MicroUNet
+    from helpers import load_train_eval_datasets, load_model_class, provide_cmap, create_output_dir
 
     from utils import s2_to_rgb
     from lr_scheduler import CosineAnnealingWarmupLR
 
-    from datetime import datetime
     from tqdm import tqdm
     import numpy as np
     import matplotlib
@@ -41,36 +36,11 @@ def main_cfg(args: DictConfig):
     # ================= OPTIONAL CONSTANTS =================
 
     
-    # COMPLETE_TILESIZE = area[args.checkpoint_area.split("_")[0]] if args.task not in ["BurnScars", "PASTIS_T31TFM", "PASTIS_T32ULU"] else 10980
     COMPLETE_TILESIZE = 10980
-    TASK_TYPE = "regression" if args.task in ["meta_canopy_height", "building_footprints"] else "segmentation"
-
-    now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    # model_size_tag = args.checkpoint_area.split("_")[1]
-    model_size_tag = args.checkpoint_area.split("_")[0] if args.checkpoint_area.split("_")[0] in ["5k", "7k", "10k"] else "full_tile"
+    TASK_TYPE = "regression" if "canopy_height" or "BFPDensity" in  args.task else "segmentation"
 
 
-    # make consisting nameing of the folders
-    if args.model_type == "unet":
-        if args.val_folds != "None": model_name = f"unet_valFolds{args.val_folds[0]}"
-        else: model_name = f"unet_full_tile_nonburned"
-    elif args.model_type == "micro_unet":
-        if args.val_folds != "None": model_name = f"micro_unet_valFolds{args.val_folds[0]}"
-        else: model_name = f"micro_unet_full_tile_nonburned"
-    elif args.model_type == "replace_final_block":
-        if args.val_folds != "None": model_name = f"LIANet_valFolds{args.val_folds[0]}"
-        else: model_name = f"LIANet_full_tile_nonburned"
-    elif args.model_type == "replace_final_block_4x":
-        model_name = f"replace_final_block__{model_size_tag}_backbone"
-    else:
-        raise NotImplementedError("Model naming not implemented for this model type")
-    
-    OUTPUTDIR = os.path.join(args.logging_directory,
-                             args.task,
-                            #  args.checkpoint_area.split("_")[0],
-                             model_name,
-                             now)
-    
+    OUTPUTDIR = create_output_dir(args)
     os.makedirs(OUTPUTDIR, exist_ok=True)
 
     # drop the config file to outputdir as json
@@ -87,7 +57,7 @@ def main_cfg(args: DictConfig):
         train_area_bounds=args.train_area_bounds,
         COMPLETE_TILESIZE=COMPLETE_TILESIZE,
         exclude_px1_px2=(args.exclude_px1, args.exclude_px2) if args.task == "building_footprints" else None,
-        val_folds=args.val_folds if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU", "PASTIS_T30UXV", "PASTIS_T31TFJ"] else None,
+        val_folds=args.val_folds if "PASTIS" in args.task else None,
     )
 
 
@@ -103,7 +73,7 @@ def main_cfg(args: DictConfig):
 
     validation_dataloader = torch.utils.data.DataLoader(
     val_ds,
-    batch_size=args.batchsize,
+    batch_size=4,
     shuffle=False,
     num_workers=args.num_workers,
     pin_memory=True,
@@ -116,7 +86,7 @@ def main_cfg(args: DictConfig):
     model = load_model_class(
         task=args.task,
         model_type=args.model_type, 
-        MODEL_PATH=models[args.checkpoint_area], 
+        MODEL_PATH=models[args.task], 
         NUM_CLASSES=num_classes[args.task], 
         ACTIVATION_FUNCTION=activation_functions[args.task])
     
@@ -141,22 +111,20 @@ def main_cfg(args: DictConfig):
     elif args.lossfunction == "cross_entropy":  
         if args.weightedSegmentation == False:
             # bce = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([5.0], device='cuda'))
-            if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU", "PASTIS_T30UXV", "PASTIS_T31TFJ"]:
+            if "PASTIS" in args.task:
                 criterion = torch.nn.CrossEntropyLoss(ignore_index=255)
             else: criterion = torch.nn.CrossEntropyLoss()
             
         else:
-            class_weights = weights[args.task]
-            class_weights_tensor = torch.tensor(class_weights).cuda()
-            criterion = torch.nn.CrossEntropyLoss(weight=class_weights_tensor)
+            class_weights_tensor = train_ds.class_weights.cuda()
+            criterion = torch.nn.CrossEntropyLoss(weight=class_weights_tensor, ignore_index=255)
         if not TASK_TYPE == "segmentation":
             raise ValueError("Cross Entropy loss can only be used for segmentation tasks")
 
-    # LR Scheduler (Cosine Decay with Warmup)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learningrate)
 
-    # min_lr = 0.01*args.learningrate
-    min_lr = 1e-6
+    min_lr = 0.01*args.learningrate
+    # min_lr = 1e-6
     scheduler = CosineAnnealingWarmupLR(
         optimizer,
         warmup_epochs=args.warmup_epochs,
@@ -172,7 +140,7 @@ def main_cfg(args: DictConfig):
     else:  # segmentation
         list_of_metrics, maximize_list = multiclass_segmentation_metrics(
             num_classes=num_classes[args.task],
-            ignore_index=255 if args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU", "PASTIS_T30UXV", "PASTIS_T31TFJ"] else None
+            ignore_index=255 if "PASTIS" in args.task else None
         )
 
     metrics = MetricCollection(list_of_metrics).cuda()
@@ -192,30 +160,20 @@ def main_cfg(args: DictConfig):
         # EITHER: classicl model like unet or so
         if args.model_type in ["unet", "micro_unet"]:
             
-            s2 = batch["s2data"]
-            label = batch["label"]
-
-            s2 = s2.cuda()
-            label = label.cuda()    
+            s2 = batch["s2data"].cuda()
+            label = batch["label"].cuda()
 
             outputs = model(s2)
-
             reconstruction = s2
 
         # OR: our fancy super cool model witch is way better
         else:   
             # timestamp = batch["timestamp"] # This has changed in the new model
-            timestamp = batch["delta_days"]
-            x_s2 = batch["x_s2"]
-            y_s2 = batch["y_s2"]
-            label = batch["label"]
-
-            timestamp = timestamp.cuda()
-            x_s2 = x_s2.cuda()
-            y_s2 = y_s2.cuda()
-            label = label.cuda()
-            
-            assert timestamp.ndim == x_s2.ndim == y_s2.ndim == 1
+            timestamp = batch["delta_days"].cuda()
+            x_s2 = batch["x_s2"].cuda()
+            y_s2 = batch["y_s2"].cuda()
+            label = batch["label"].cuda()
+            # print(torch.unique(label)            assert timestamp.ndim == x_s2.ndim == y_s2.ndim == 1
             reconstruction, outputs = model(timestamp, x_s2, y_s2, region_idx)
 
         return reconstruction, outputs, label
@@ -230,13 +188,19 @@ def main_cfg(args: DictConfig):
         # =================================================
         # TRAINING
         # =================================================
-
         model.train()
         for batch in tqdm(training_dataloader,total=len(training_dataloader),desc=f"Epoch {epoch+1}/{args.epochs} - Training"):
 
             optimizer.zero_grad()
             # region_list: {0: ["T31TFJ"], 1: ["T32ULU"], 2: ["T31TFM"], 3: ["T30UXV"]}
-            region_idx = 0 if args.task == "PASTIS_T31TFJ" else 1 if args.task == "PASTIS_T32ULU" else 2 if args.task == "PASTIS_T31TFM" else 3
+            if "local" in args.task: 
+                region_idx= 0
+            elif "joint" and "PASTIS" in args.task:
+                region_idx = 0 if "T31TFJ" in args.task else 1 if "T32ULU" in args.task else 2 if "T31TFM" in args.task else 3
+            elif "joint" and "BurnScars" in args.task:
+                region_idx = 0 if "T11SMT" in args.task else 1 if "T16REV" in args.task else None
+            elif "joint" and "BFP" in args.task:
+                region_idx = 0 if "T31TFJ" in args.task else 1 if "T32ULU" in args.task else 2 if "T31TFM" in args.task else 3
             _ , outputs, label = forward_model(model, args.model_type, batch, region_idx)
             if not torch.isfinite(outputs).all().item():
                 print("Non-finite outputs")
@@ -247,6 +211,9 @@ def main_cfg(args: DictConfig):
                 print("NaNs in outputs"); break
             if torch.isnan(label).any():
                 print("NaNs in label"); break
+            # print("outputs:", outputs.shape)
+            # print("weights:", class_weights_tensor.shape)
+            # print("labels unique:", torch.unique(label))
             train_loss = criterion(outputs.float(), label.long())
             if not torch.isfinite(train_loss).item():
                 print("Non-finite loss:", train_loss)
@@ -261,7 +228,7 @@ def main_cfg(args: DictConfig):
 
         # Step LR Scheduler
         writer.add_scalar("train/learning_rate", scheduler.get_last_lr()[0], epoch)
-        # scheduler.step()
+        scheduler.step()
 
         # =================================================
         # VALIDATION
@@ -298,54 +265,7 @@ def main_cfg(args: DictConfig):
 
                 # get the colormap for segmentation tasks
                 if TASK_TYPE == "segmentation":
-
-                    if args.task == "dynamic_world":
-                        colors = [
-                                "#419BDF",  # water - blue
-                                "#397D49",  # trees - dark green
-                                "#88B053",  # grass - light green
-                                "#E4E8A1",  # crops - yellow-green
-                                "#E47474",  # built area - red
-                                "#A59B8F",  # bare ground - brown-gray
-                            ]
-                        vvmin, vvmax = 0, 5
-                    elif args.task == "dominant_leaf_type":
-                        colors = [
-                                "#FFFFFF",  # 0 - no data (white)
-                                "#4CAF50",  # 1 - broadleaf (green)
-                                "#1B5E20",  # 2 - needleleaf (dark green)
-                                ]
-                        vvmin, vvmax = 0, 2
-                    elif args.task in ["PASTIS_T31TFM", "PASTIS_T32ULU", "PASTIS_T30UXV", "PASTIS_T31TFJ"]:
-                        colors = [
-                                (0, 0, 0),
-                                (0.6823529411764706, 0.7803921568627451, 0.9098039215686274),
-                                (1.0, 0.4980392156862745, 0.054901960784313725),
-                                (1.0, 0.7333333333333333, 0.47058823529411764),
-                                (0.17254901960784313, 0.6274509803921569, 0.17254901960784313),
-                                (0.596078431372549, 0.8745098039215686, 0.5411764705882353),
-                                (0.8392156862745098, 0.15294117647058825, 0.1568627450980392),
-                                (1.0, 0.596078431372549, 0.5882352941176471),
-                                (0.5803921568627451, 0.403921568627451, 0.7411764705882353),
-                                (0.7725490196078432, 0.6901960784313725, 0.8352941176470589),
-                                (0.5490196078431373, 0.33725490196078434, 0.29411764705882354),
-                                (0.7686274509803922, 0.611764705882353, 0.5803921568627451),
-                                (0.8901960784313725, 0.4666666666666667, 0.7607843137254902),
-                                (0.9686274509803922, 0.7137254901960784, 0.8235294117647058),
-                                (0.4980392156862745, 0.4980392156862745, 0.4980392156862745),
-                                (0.7803921568627451, 0.7803921568627451, 0.7803921568627451),
-                                (0.7372549019607844, 0.7411764705882353, 0.13333333333333333),
-                                (0.8588235294117647, 0.8588235294117647, 0.5529411764705883),
-                                (0.09019607843137255, 0.7450980392156863, 0.8117647058823529),
-                                (1, 1, 1),
-                            ]
-                        vvmin, vvmax = 0, 19
-                    else:
-                        # colors = ["#FFFFFF", "#000000"]
-                        colors = ["#000000", "#FFFFFF"]
-
-                        vvmin, vvmax = 0, 1
-                    
+                    colors, vvmin, vvmax = provide_cmap(TASK_TYPE, args)
                     cmap = ListedColormap(colors)
 
                 counter = 0
@@ -395,15 +315,7 @@ def main_cfg(args: DictConfig):
                         
 
                     plt.tight_layout()
-                    # print(
-                    #     "dtypes:",
-                    #     "rgb_in", rgb0.dtype,
-                    #     "rgb_rec", rgb1.dtype,
-                    #     "pred", (pred_argmax.dtype if TASK_TYPE!="regression" else outputs.dtype),
-                    #     "label", (label_to_plot.dtype if TASK_TYPE!="regression" else label.dtype),
-                    #     )
                     writer.add_figure(f"val/visualization_{counter}", fig, epoch)
-                    #plt.savefig("test.png")
                     plt.close()
 
                     counter += 1

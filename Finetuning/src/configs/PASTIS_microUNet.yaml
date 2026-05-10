@@ -15,9 +15,9 @@ hydra:
 
 seed: 42
 
-task: PASTIS         # choices: [dynamic_world, meta_canopy_height, building_footprints, dominant_leaf_type, building_footprints_binary]
+task: PASTIS_joint_T31TFJ   # choices: [dynamic_world, meta_canopy_height, building_footprints, dominant_leaf_type, building_footprints_binary]
 model_type: micro_unet    
-checkpoint_area: "full_tile_modified_PASTIS_T11TFM"  # or full_tile_modified_PASTIS_T32ULU
+checkpoint_area: none  # or full_tile_modified_PASTIS_T32ULU
 train_area_bounds: none
 weightedSegmentation: False
 
@@ -28,11 +28,11 @@ logging_directory: /home/user/results_local/finetuning_results
 labels_path: masks/PASTIS
 # deep learning related
 lossfunction: cross_entropy
-batchsize: 32
-learningrate: 0.0001
+batchsize: 16
+learningrate: 0.000003
 num_workers: 8
 epochs: 60
 warmup_epochs: 0
-gpu_id: 6
+gpu_id: 2
 validate_every_n_epochs: 2
 plot_every_n_epochs: 5

@@ -1,7 +1,8 @@
+from datetime import datetime
 import os
 
 from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster, PASTIS, BurnScars
-from models.models_finetune import DownstreamModel, UNet, MicroUNet, DownstreamModel_CRHead
+from models.models_finetune import DownstreamModel, UNet, MicroUNet 
 
 
 import numpy as np
@@ -98,48 +99,32 @@ def load_train_eval_datasets(
             complete_tile_size=COMPLETE_TILESIZE,
         )
 
-    elif task == "building_footprints":
-        px1 = (0, 4800) # We lack labels for this area, so we exclude it from training/validation
-        px2 = (3040, 6080)
+    elif "BFPDensity" in task:
         train_ds = BuildingCoverageRaster(
             top_dir=TOP_DIR,
             s2_tiles=S2_TILES,
             labels=LABELS,
-            training_bounds_left_top_right_bottom=train_area_bounds,
             train_val_key="train",
-            complete_tile_size=COMPLETE_TILESIZE,
-            exclude_px1_px2=(px1, px2),
         )
         val_ds = BuildingCoverageRaster(
             top_dir=TOP_DIR,
             s2_tiles=S2_TILES,
             labels=LABELS,
-            training_bounds_left_top_right_bottom=train_area_bounds,
             train_val_key="val",
-            complete_tile_size=COMPLETE_TILESIZE,
-            exclude_px1_px2=(px1, px2),
         )
 
-    elif task == "building_footprints_binary":
-        px1 = (0, 4800) # We lack labels for this area, so we exclude it from training/validation
-        px2 = (3040, 6080)
+    elif "BFPBinary" in task:
         train_ds = BuildingBinaryRaster(
             top_dir=TOP_DIR,
             s2_tiles=S2_TILES,
             labels=LABELS,
-            training_bounds_left_top_right_bottom=train_area_bounds,
             train_val_key="train",
-            complete_tile_size=COMPLETE_TILESIZE,
-            exclude_px1_px2=(px1, px2),
         )
         val_ds = BuildingBinaryRaster(
             top_dir=TOP_DIR,
             s2_tiles=S2_TILES,
             labels=LABELS,
-            training_bounds_left_top_right_bottom=train_area_bounds,
             train_val_key="val",
-            complete_tile_size=COMPLETE_TILESIZE,
-            exclude_px1_px2=(px1, px2),
         )
 
     elif task == "dominant_leaf_type":
@@ -159,7 +144,7 @@ def load_train_eval_datasets(
             train_val_key="val",
             complete_tile_size=COMPLETE_TILESIZE,
         )
-    elif task == "PASTIS_T32ULU" or task == "PASTIS_T31TFM" or task == "PASTIS_T30UXV" or task == "PASTIS_T31TFJ":
+    elif "PASTIS" in task:
         train_ds = PASTIS(
             top_dir=TOP_DIR,
             s2_tiles=S2_TILES,
@@ -174,7 +159,7 @@ def load_train_eval_datasets(
             train_val_key="val",
             val_folds=val_folds,
         )
-    elif task == "BurnScars":
+    elif "BurnScars" in task:
         train_ds = BurnScars(
             top_dir=TOP_DIR,
             s2_tiles=S2_TILES,
@@ -203,10 +188,10 @@ def load_model_class(
             if not model_type == "replace_final_block_4x":
                 raise ValueError("Footprint classification must be run with 4x model")
         
-        model = DownstreamModel_CRHead(
+        model = DownstreamModel(
             model_path=MODEL_PATH,
             checkpoint_path_relative="model_checkpoints/latest_validation_checkpoint.pt",
-            # adaption_strategy=model_type,
+            adaption_strategy=model_type,
             num_classes=NUM_CLASSES,
             # activation=ACTIVATION_FUNCTION,
         )
@@ -244,3 +229,81 @@ def load_model_class(
         raise ValueError("Invalid model_type")
     
     return model
+
+def provide_cmap(TASK_TYPE, args):
+    if args.task == "dynamic_world":
+        colors = [
+                "#419BDF",  # water - blue
+                "#397D49",  # trees - dark green
+                "#88B053",  # grass - light green
+                "#E4E8A1",  # crops - yellow-green
+                "#E47474",  # built area - red
+                "#A59B8F",  # bare ground - brown-gray
+            ]
+        vvmin, vvmax = 0, 5
+    elif args.task == "dominant_leaf_type":
+        colors = [
+                "#FFFFFF",  # 0 - no data (white)
+                "#4CAF50",  # 1 - broadleaf (green)
+                "#1B5E20",  # 2 - needleleaf (dark green)
+                ]
+        vvmin, vvmax = 0, 2
+    elif "PASTIS" in args.task:
+        colors = [
+                (0, 0, 0),
+                (0.6823529411764706, 0.7803921568627451, 0.9098039215686274),
+                (1.0, 0.4980392156862745, 0.054901960784313725),
+                (1.0, 0.7333333333333333, 0.47058823529411764),
+                (0.17254901960784313, 0.6274509803921569, 0.17254901960784313),
+                (0.596078431372549, 0.8745098039215686, 0.5411764705882353),
+                (0.8392156862745098, 0.15294117647058825, 0.1568627450980392),
+                (1.0, 0.596078431372549, 0.5882352941176471),
+                (0.5803921568627451, 0.403921568627451, 0.7411764705882353),
+                (0.7725490196078432, 0.6901960784313725, 0.8352941176470589),
+                (0.5490196078431373, 0.33725490196078434, 0.29411764705882354),
+                (0.7686274509803922, 0.611764705882353, 0.5803921568627451),
+                (0.8901960784313725, 0.4666666666666667, 0.7607843137254902),
+                (0.9686274509803922, 0.7137254901960784, 0.8235294117647058),
+                (0.4980392156862745, 0.4980392156862745, 0.4980392156862745),
+                (0.7803921568627451, 0.7803921568627451, 0.7803921568627451),
+                (0.7372549019607844, 0.7411764705882353, 0.13333333333333333),
+                (0.8588235294117647, 0.8588235294117647, 0.5529411764705883),
+                (0.09019607843137255, 0.7450980392156863, 0.8117647058823529),
+                (1, 1, 1),
+            ]
+        vvmin, vvmax = 0, 19
+    else:
+        # colors = ["#FFFFFF", "#000000"]
+        colors = ["#000000", "#FFFFFF"]
+
+        vvmin, vvmax = 0, 1 
+    return colors, vvmin, vvmax
+
+def create_output_dir(args):
+    if args.model_type == "unet":
+        if args.val_folds != "None": 
+            model_name = f"unet_valFolds{args.val_folds[0]}_lr{args.learningrate}_batchsize{args.batchsize}"
+        else: 
+            model_name = f"unet_full_tile_nonburned"
+    elif args.model_type == "micro_unet":
+        if args.val_folds != "None": 
+            model_name = f"micro_unet_valFolds{args.val_folds[0]}_lr{args.learningrate}_batchsize{args.batchsize}"
+        else: 
+            model_name = f"micro_unet_full_tile_nonburned"
+    elif args.model_type == "replace_final_block":
+        if args.val_folds != "None": 
+            model_name = f"LIANet_valFolds{args.val_folds[0]}_lr{args.learningrate}_batchsize{args.batchsize}"
+        else: 
+            model_name = f"LIANet_lr{args.learningrate}_batchsize{args.batchsize}_nonburned"
+    elif args.model_type == "replace_final_block_4x":
+        model_name = f"replace_final_block_4x_lr{args.learningrate}_batchsize{args.batchsize}"
+    else:
+        raise NotImplementedError("Model naming not implemented for this model type")
+
+    now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")    
+    
+    OUTPUTDIR = os.path.join(args.logging_directory,
+                             args.task,
+                             model_name,
+                             now)
+    return OUTPUTDIR
