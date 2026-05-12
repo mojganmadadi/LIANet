@@ -260,7 +260,7 @@ class BuildingBinaryRaster(Dataset):
 
         samples_path = os.path.join(
             samples_dir,
-            f"{self.s2_tile_name}_{train_val_key}_samples.json"
+            f"{self.s2_tile_name}_{train_val_key}_samples_10perc.json"
         )
 
         with open(samples_path, "r") as f:
@@ -327,7 +327,7 @@ class BuildingBinaryRaster(Dataset):
             "time_str": s["time_str"],
             "x_s2": s["x"],
             "y_s2": s["y"],
-            "s2data": img,
+            "s2data": _preprocess_S2(img),
             "label": label,
         }
 
@@ -442,7 +442,7 @@ class BuildingCoverageRaster(Dataset):
 
         samples_path = os.path.join(
             samples_dir,
-            f"{self.s2_tile_name}_{train_val_key}_samples.json"
+            f"{self.s2_tile_name}_{train_val_key}_samples_10perc.json"
         )
 
         with open(samples_path, "r") as f:
@@ -513,13 +513,13 @@ class BuildingCoverageRaster(Dataset):
                 self.patch_size, scale,
                 self.patch_size, scale
             ).mean(axis=(1, 3)).astype(np.float32)
-
+            # print(building_density)
         return {
             "delta_days": torch.tensor(delta_days, dtype=torch.float32),
             "time_str": s["time_str"],
             "x_s2": s["x"],
             "y_s2": s["y"],
-            "s2data": img,
+            "s2data": _preprocess_S2(img),
             "label": building_density,
         }
 

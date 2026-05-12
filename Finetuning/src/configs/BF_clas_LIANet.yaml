@@ -22,16 +22,16 @@ checkpoint_area: none
 val_folds: None
 
 
-logging_directory: /home/user/results_local/finetuning_results
+logging_directory: /home/user/results_local/finetuning_results_BFPBinary/ # path to save the finetuning results, e.g. /home/user/results_local/finetuning_results_BFPBinary/
 
 # deep learning related
 lossfunction: cross_entropy
-batchsize: 32
-learningrate: 0.000001
+batchsize: 8
+learningrate: 0.00003
 num_workers: 8
-epochs: 50
+epochs: 70
 warmup_epochs: 0
 gpu_id: 1
-validate_every_n_epochs: 1
+validate_every_n_epochs: 2
 plot_every_n_epochs: 2
 weightedSegmentation: False

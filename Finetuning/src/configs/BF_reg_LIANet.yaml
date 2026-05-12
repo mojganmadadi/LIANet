@@ -20,16 +20,16 @@ model_type: replace_final_block
 checkpoint_area: none     # choices: ["5k", "7k", "10k"] correesponding to A0, A+, and A++ respectively. small and large correspond to different model sizes.
 val_folds: None
 train_area_bounds: none
-logging_directory: /home/user/results_local/finetuning_results
+logging_directory: /home/user/results_local/finetuning_results_BFPDensity
 
 
 # deep learning related
 lossfunction: huber 
-batchsize: 32
-learningrate: 0.00005
+batchsize: 8
+learningrate: 0.00003
 num_workers: 8
-epochs: 50
+epochs: 20
 warmup_epochs: 3
 gpu_id: 5
-validate_every_n_epochs: 1
-plot_every_n_epochs: 5
+validate_every_n_epochs: 2
+plot_every_n_epochs: 2

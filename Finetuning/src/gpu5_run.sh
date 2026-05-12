@@ -1,29 +1,5 @@
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[1] seed=42 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[1] seed=111 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[1] seed=222 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[1] seed=333 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[1] seed=444 gpu_id=5
-#
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[2] seed=42 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[2] seed=111 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[2] seed=222 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[2] seed=333 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[2] seed=444 gpu_id=5
-#
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[3] seed=42 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[3] seed=111 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[3] seed=222 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[3] seed=333 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[3] seed=444 gpu_id=5
-#
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[4] seed=42 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[4] seed=111 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[4] seed=222 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[4] seed=333 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[4] seed=444 gpu_id=5
-#
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[5] seed=42 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[5] seed=111 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[5] seed=222 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[5] seed=333 gpu_id=5
-python train.py --config-name "PASTIS_LIANet" task=PASTIS_local_T32ULU val_folds=[5] seed=444 gpu_id=5
+python train.py --config-name "BF_reg_LIANet" task=BFPDensity_local_T31TFM seed=35 gpu_id=5
+python train.py --config-name "BF_reg_LIANet" task=BFPDensity_local_T31TFM seed=111 gpu_id=5
+python train.py --config-name "BF_reg_LIANet" task=BFPDensity_local_T31TFM seed=222 gpu_id=5
+python train.py --config-name "BF_reg_LIANet" task=BFPDensity_local_T31TFM seed=333 gpu_id=5
+python train.py --config-name "BF_reg_LIANet" task=BFPDensity_local_T31TFM seed=444 gpu_id=5

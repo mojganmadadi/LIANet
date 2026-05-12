@@ -37,8 +37,7 @@ def main_cfg(args: DictConfig):
 
     
     COMPLETE_TILESIZE = 10980
-    TASK_TYPE = "regression" if "canopy_height" or "BFPDensity" in  args.task else "segmentation"
-
+    TASK_TYPE = "regression" if ("canopy_height" in args.task or "BFPDensity" in args.task) else "segmentation"
 
     OUTPUTDIR = create_output_dir(args)
     os.makedirs(OUTPUTDIR, exist_ok=True)
@@ -214,7 +213,10 @@ def main_cfg(args: DictConfig):
             # print("outputs:", outputs.shape)
             # print("weights:", class_weights_tensor.shape)
             # print("labels unique:", torch.unique(label))
-            train_loss = criterion(outputs.float(), label.long())
+            if "BFPDensity" in args.task:
+                train_loss = criterion(outputs.squeeze().float(), label)
+            else:
+                train_loss = criterion(outputs.float(), label.long())
             if not torch.isfinite(train_loss).item():
                 print("Non-finite loss:", train_loss)
                 break
@@ -244,7 +246,9 @@ def main_cfg(args: DictConfig):
                 for batch in tqdm(validation_dataloader,total=len(validation_dataloader),desc=f"Epoch {epoch+1}/{args.epochs} - Validation"):
 
                     _ , outputs, label = forward_model(model, args.model_type, batch, region_idx)
-
+                if "BFPDensity" in args.task:
+                    metrictracker.update(outputs.squeeze(), label.squeeze())
+                else:
                     metrictracker.update(outputs, label)
 
             # save metrics to json and tensorboard
@@ -296,10 +300,10 @@ def main_cfg(args: DictConfig):
     
                     if TASK_TYPE == "regression":
 
-                        axs[2].imshow(outputs[0,0],vmin=0,vmax=1)
+                        axs[2].imshow(outputs[0].squeeze(),vmin=0,vmax=1)
                         axs[2].set_title("Outputs")
 
-                        axs[3].imshow(label[0,0],vmin=0,vmax=1)
+                        axs[3].imshow(label[0].squeeze(),vmin=0,vmax=1)
                         axs[3].set_title("Label")
                         
 
