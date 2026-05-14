@@ -184,7 +184,7 @@ def load_model_class(
     ACTIVATION_FUNCTION):
     if model_type in ["replace_final_block", "replace_final_block_4x"]:
         
-        if task == "building_footprints_binary":
+        if "BFPBinary" in task:
             if not model_type == "replace_final_block_4x":
                 raise ValueError("Footprint classification must be run with 4x model")
         
@@ -197,7 +197,7 @@ def load_model_class(
         )
 
     elif model_type == "unet":
-        if task == "building_footprints_binary":
+        if "BFPBinary" in task:
             model = UNet(n_channels=12,
                         n_classes=NUM_CLASSES,
                         backbone_size="small",
@@ -212,7 +212,7 @@ def load_model_class(
                         activation=ACTIVATION_FUNCTION)
 
     elif model_type == "micro_unet":
-        if task == "building_footprints_binary":
+        if "BFPBinary" in task:
             model = MicroUNet(n_channels=12,
                             num_classes=NUM_CLASSES,
                             bilinear=True,
@@ -281,20 +281,20 @@ def provide_cmap(TASK_TYPE, args):
 
 def create_output_dir(args):
     if args.model_type == "unet":
-        if args.val_folds != "None": 
+        if "PASTIS" in args.task: 
             model_name = f"unet_valFolds{args.val_folds[0]}_lr{args.learningrate}_batchsize{args.batchsize}"
         else: 
-            model_name = f"unet_full_tile_nonburned"
+            model_name = f"unet_lr{args.learningrate}_batchsize{args.batchsize}"
     elif args.model_type == "micro_unet":
-        if args.val_folds != "None": 
+        if "PASTIS" in args.task:
             model_name = f"micro_unet_valFolds{args.val_folds[0]}_lr{args.learningrate}_batchsize{args.batchsize}"
         else: 
-            model_name = f"micro_unet_full_tile_nonburned"
+            model_name = f"microunet_lr{args.learningrate}_batchsize{args.batchsize}"
     elif args.model_type == "replace_final_block":
-        if args.val_folds != "None": 
+        if "PASTIS" in args.task:
             model_name = f"LIANet_valFolds{args.val_folds[0]}_lr{args.learningrate}_batchsize{args.batchsize}"
         else: 
-            model_name = f"LIANet_lr{args.learningrate}_batchsize{args.batchsize}_nonburned"
+            model_name = f"LIANet_lr{args.learningrate}_batchsize{args.batchsize}"
     elif args.model_type == "replace_final_block_4x":
         model_name = f"replace_final_block_4x_lr{args.learningrate}_batchsize{args.batchsize}"
     else:

@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 from omegaconf import OmegaConf
 from settings import * 
 
-@main(config_path="configs", config_name="BF_reg_LIANet")
+@main(config_path="configs", config_name="BF_clas_microUNet")
 def main_cfg(args: DictConfig):
     # only one visible device
     import os

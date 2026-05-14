@@ -23,15 +23,15 @@ weightedSegmentation: False
 
 val_folds: [3]
 
-logging_directory: /home/user/results_local/finetuning_results_hyperparameter_search
+logging_directory: /home/user/results_local/finetuning_results_PASTIS
 labels_path: masks/PASTIS
 # deep learning related
 lossfunction: cross_entropy
-batchsize: 16
-learningrate: 0.000003
+batchsize: 8
+learningrate: 0.001
 num_workers: 8
-epochs: 60
+epochs: 10
 warmup_epochs: 2
 gpu_id: 4
 validate_every_n_epochs: 2
-plot_every_n_epochs: 5
+plot_every_n_epochs: 2

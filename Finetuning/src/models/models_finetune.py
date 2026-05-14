@@ -1,3 +1,4 @@
+from sympy import factor
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -418,39 +419,48 @@ class OutConvmicro(nn.Module):
 
 class MicroUNet(nn.Module):
     """
-    A lightweight UNet variant (~0.5M params @ base≈32) with optional 4× upsample.
-    API matches your UNet: (n_channels, n_classes, bilinear=False, activation="none", upsample_4x=False)
+    Slightly larger MicroUNet.
+    width_mult=1.4 gives roughly ~2x params compared to base=32.
     """
-    def __init__(self, n_channels, num_classes, bilinear=True, activation="none", upsample_4x=False, base=32):
+    def __init__(
+        self,
+        n_channels,
+        num_classes,
+        bilinear=True,
+        activation="none",
+        upsample_4x=False,
+        base=32,
+        width_mult=1.4,
+    ):
         super().__init__()
         self.n_channels = n_channels
         self.num_classes = num_classes
         self.bilinear = bilinear
         self.upsample_4x = upsample_4x
 
-        # Encoder widths: base, 2b, 4b, 8b; bottleneck: 16b (reduced if bilinear)
-        # Keep widths small; DSConv keeps params low.
-        ch1 = base            # e.g., 32
-        ch2 = base * 2        # 64
-        ch3 = base * 4        # 128
-        ch4 = base * 8        # 256
-        factor = 2 if bilinear else 1
-        ch5 = base * 16 // factor  # 512 (or 256 if bilinear)
+        def c(v):
+            # round channels to nearest multiple of 8 for efficiency
+            return int(round(v * width_mult / 8) * 8)
 
-        # inc/down
-        self.inc  = DoubleDSConv(n_channels, ch1)
+        ch1 = 48
+        ch2 = 96
+        ch3 = 192
+        ch4 = 384
+
+        factor = 2 if bilinear else 1
+        ch5 = 768 // factor
+
+        self.inc = DoubleDSConv(n_channels, ch1)
         self.down1 = Downmicro(ch1, ch2)
         self.down2 = Downmicro(ch2, ch3)
         self.down3 = Downmicro(ch3, ch4)
         self.down4 = Downmicro(ch4, ch5)
 
-        # up path (mirror)
         self.up1 = Upmicro(ch5 + ch4, ch4 // factor, bilinear)
         self.up2 = Upmicro((ch4 // factor) + ch3, ch3 // factor, bilinear)
         self.up3 = Upmicro((ch3 // factor) + ch2, ch2 // factor, bilinear)
         self.up4 = Upmicro((ch2 // factor) + ch1, ch1, bilinear)
 
-        # Optional post-upsampling conv (feature space), like your UNet
         if upsample_4x:
             self.post_upsample_conv = nn.Sequential(
                 nn.Conv2d(ch1, ch1, kernel_size=3, padding=1, bias=False),
@@ -460,7 +470,6 @@ class MicroUNet(nn.Module):
 
         self.outc = OutConvmicro(ch1, num_classes)
 
-        # final activation
         if activation == "none":
             self.final_activation = nn.Identity()
         elif activation == "relu":
@@ -485,7 +494,7 @@ class MicroUNet(nn.Module):
         x = self.up4(x, x1)
 
         if self.upsample_4x:
-            x = F.interpolate(x, scale_factor=4, mode='bilinear', align_corners=False)
+            x = F.interpolate(x, scale_factor=4, mode="bilinear", align_corners=False)
             x = self.post_upsample_conv(x)
 
         logits = self.outc(x)

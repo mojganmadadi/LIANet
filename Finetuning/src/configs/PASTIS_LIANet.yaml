@@ -19,7 +19,7 @@ task: none   # PASTIS_joint_T32ULU or PASTIS_joint_T31TFM or PASTIS_joint_T31TFJ
 model_type: replace_final_block
 train_area_bounds: none
 weightedSegmentation: none
-val_folds: none
+val_folds: [1]
 
 logging_directory: /home/user/results_local/finetuning_results
 labels_path: masks/PASTIS
