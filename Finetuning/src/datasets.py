@@ -574,18 +574,22 @@ class PASTIS(Dataset):
                  labels,
                  train_val_key,
                  val_folds,
+                 metadata_path=None,
                  ):
 
 
         self.top_dir = top_dir # "/home/user/data_shared"
         self.s2_tiles = s2_tiles # "T32ULU"
-        self.labels_path = os.path.join(top_dir, labels, self.s2_tiles)
-        self.metadata_path = os.path.join(top_dir, labels, "metadata.geojson")
+        self.labels_path = self._resolve_labels_path(top_dir, labels, self.s2_tiles)
+        self.metadata_path = self._resolve_metadata_path(top_dir, labels, metadata_path)
         self.train_val_key = train_val_key
         self.val_folds = val_folds # [2,3] list of integers from 1 to 5
 
         # take the first image in the tiles path as reference
-        self.list_of_s2_tiles = os.listdir(os.path.join(self.top_dir, self.s2_tiles))
+        self.list_of_s2_tiles = sorted(
+            f for f in os.listdir(os.path.join(self.top_dir, self.s2_tiles))
+            if f.endswith(".tif")
+        )
         ref_img_path = os.path.join(self.top_dir, self.s2_tiles, self.list_of_s2_tiles[0])
         ref_img = rasterio.open(ref_img_path)
         ref_transform = ref_img.transform
@@ -646,6 +650,56 @@ class PASTIS(Dataset):
                     else: continue
         print(f"Found {len(self.samples)} samples for {train_val_key} with >0% burned area")
         np.random.shuffle(self.samples)
+
+    @staticmethod
+    def _has_tif_files(path):
+        return os.path.isdir(path) and any(f.endswith(".tif") for f in os.listdir(path))
+
+    @classmethod
+    def _resolve_labels_path(cls, top_dir, labels, s2_tiles):
+        label_candidates = []
+        if os.path.isabs(labels):
+            label_candidates.extend([
+                os.path.join(labels, s2_tiles),
+                labels,
+            ])
+        else:
+            label_candidates.extend([
+                os.path.join(top_dir, labels, s2_tiles),
+                os.path.join(top_dir, labels),
+                os.path.join(top_dir, f"{s2_tiles}_labels"),
+            ])
+
+        for candidate in label_candidates:
+            if cls._has_tif_files(candidate):
+                return candidate
+
+        raise FileNotFoundError(
+            "Could not find PASTIS label .tif files. Checked: "
+            + ", ".join(label_candidates)
+        )
+
+    @staticmethod
+    def _resolve_metadata_path(top_dir, labels, metadata_path):
+        metadata_candidates = []
+        if metadata_path is not None:
+            metadata_candidates.append(metadata_path)
+        if os.path.isabs(labels):
+            metadata_candidates.append(os.path.join(labels, "metadata.geojson"))
+        else:
+            metadata_candidates.extend([
+                os.path.join(top_dir, labels, "metadata.geojson"),
+                os.path.join(top_dir, "metadata.geojson"),
+            ])
+
+        for candidate in metadata_candidates:
+            if os.path.isfile(candidate):
+                return candidate
+
+        raise FileNotFoundError(
+            "Could not find PASTIS metadata.geojson. Checked: "
+            + ", ".join(metadata_candidates)
+        )
 
     def __len__(self):
         return len(self.samples)

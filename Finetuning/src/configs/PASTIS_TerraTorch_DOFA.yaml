@@ -1,0 +1,89 @@
+# TerraTorch EncoderDecoderFactory model inside the existing LIANet fine-tuning loop.
+defaults:
+  - _self_
+  - override hydra/hydra_logging: disabled
+  - override hydra/job_logging: disabled
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+seed: 42
+
+task: PASTIS_T31TFM
+model_type: terratorch_factory
+checkpoint_area: full_tile_modified_PASTIS_T31TFM
+train_area_bounds: none
+weightedSegmentation: False
+val_folds: [1]
+
+logging_directory: /home/user/results_local/finetuning_results
+labels_path: masks/PASTIS
+data_root: null
+lossfunction: cross_entropy
+batchsize: 32
+learningrate: 0.00001
+num_workers: 8
+epochs: 60
+warmup_epochs: 0
+gpu_id: 0
+validate_every_n_epochs: 2
+plot_every_n_epochs: 5
+
+terratorch:
+  task: segmentation
+  dataset_bands:
+    - COASTAL_AEROSOL
+    - BLUE
+    - GREEN
+    - RED
+    - RED_EDGE_1
+    - RED_EDGE_2
+    - RED_EDGE_3
+    - NIR_BROAD
+    - NIR_NARROW
+    - WATER_VAPOR
+    - SWIR_1
+    - SWIR_2
+  model_bands:
+    - COASTAL_AEROSOL
+    - BLUE
+    - GREEN
+    - RED
+    - RED_EDGE_1
+    - RED_EDGE_2
+    - RED_EDGE_3
+    - NIR_BROAD
+    - NIR_NARROW
+    - WATER_VAPOR
+    - SWIR_1
+    - SWIR_2
+  normalization:
+    # Current LIANet datasets return clipped (raw - 1000) / 10000 tensors.
+    means: [0.0336764, 0.0434256, 0.0693552, 0.0664208, 0.1165692, 0.2410459, 0.2856872, 0.3025547, 0.3128596, 0.3194404, 0.2183094, 0.1334846]
+    stds: [0.0419561, 0.0469038, 0.0493095, 0.0599906, 0.0578902, 0.0800754, 0.0972146, 0.1043856, 0.0999628, 0.1030912, 0.0802188, 0.0715304]
+  model_args:
+    backbone: dofa_large_patch16_224
+    backbone_img_size: 128
+    backbone_pretrained: true
+    backbone_model_bands:
+      - COASTAL_AEROSOL
+      - BLUE
+      - GREEN
+      - RED
+      - RED_EDGE_1
+      - RED_EDGE_2
+      - RED_EDGE_3
+      - NIR_BROAD
+      - NIR_NARROW
+      - WATER_VAPOR
+      - SWIR_1
+      - SWIR_2
+    backbone_out_indices: [5, 11, 17, 23]
+    necks:
+      - name: ReshapeTokensToImage
+        remove_cls_token: true
+      - name: LearnedInterpolateToPyramidal
+    decoder: UNetDecoder
+    decoder_channels: [512, 256, 128, 64]
+    head_dropout: 0.1

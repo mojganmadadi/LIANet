@@ -2,11 +2,28 @@ import os
 
 from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster, PASTIS, BurnScars
 from models.models_finetune import DownstreamModel, UNet, MicroUNet, DownstreamModel_CRHead
+from models.terratorch_models import TerraTorchFactorySegmentationModel
 
 
 import numpy as np
 import rasterio
 from pathlib import Path
+
+def resolve_data_config(task, top_dirs, s2_tiles, labels, data_root=None):
+    """Resolve task data paths, optionally overriding the configured root."""
+    task_top_dir = top_dirs[task]
+    task_s2_tiles = s2_tiles[task]
+    task_labels = labels[task]
+
+    if data_root is None:
+        return task_top_dir, task_s2_tiles, task_labels
+
+    data_root = os.path.abspath(os.path.expanduser(data_root))
+    if isinstance(task_s2_tiles, str) and os.path.basename(data_root) == task_s2_tiles:
+        return os.path.dirname(data_root), task_s2_tiles, task_labels
+
+    return data_root, task_s2_tiles, task_labels
+
 
 def compute_mean_std(tile_paths):
     """
@@ -196,7 +213,8 @@ def load_model_class(
     model_type, 
     MODEL_PATH, 
     NUM_CLASSES, 
-    ACTIVATION_FUNCTION):
+    ACTIVATION_FUNCTION,
+    TERRATORCH_CONFIG=None):
     if model_type in ["replace_final_block", "replace_final_block_4x"]:
         
         if task == "building_footprints_binary":
@@ -239,6 +257,12 @@ def load_model_class(
                             bilinear=True,
                             activation=ACTIVATION_FUNCTION,
                             upsample_4x=False)
+
+    elif model_type == "terratorch_factory":
+        model = TerraTorchFactorySegmentationModel(
+            config=TERRATORCH_CONFIG,
+            num_classes=NUM_CLASSES,
+        )
 
     else:
         raise ValueError("Invalid model_type")

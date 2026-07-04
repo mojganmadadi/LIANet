@@ -17,7 +17,8 @@ RUN pip install --upgrade pip && \
         fastprogress jupyter matplotlib tqdm tensorboard \
         scikit-learn scikit-image easydict tensorboardX torchinfo \
         argconfigparse torchmetrics seaborn hydra-core shapely \
-        geopandas xarray timm einops h5py rasterio sarpy
+        geopandas xarray timm einops h5py rasterio sarpy \
+        terratorch
 
 ENV workdir=/home/user
 WORKDIR ${workdir}
