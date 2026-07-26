@@ -152,6 +152,9 @@ def load_train_eval_datasets(
             train_val_key="train",
             val_folds=val_folds,
         )
+        # all_tiles = {"T32ULU", "T31TFJ"}
+        # val_tile = next(iter(all_tiles-{S2_TILES}))
+
         val_ds = PASTIS(
             top_dir=TOP_DIR,
             s2_tiles=S2_TILES,

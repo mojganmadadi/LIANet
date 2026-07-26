@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 from omegaconf import OmegaConf
 from settings import * 
 
-@main(config_path="configs", config_name="BF_clas_microUNet")
+@main(config_path="configs", config_name="PASTIS_LIANet")
 def main_cfg(args: DictConfig):
     # only one visible device
     import os
@@ -172,7 +172,8 @@ def main_cfg(args: DictConfig):
             x_s2 = batch["x_s2"].cuda()
             y_s2 = batch["y_s2"].cuda()
             label = batch["label"].cuda()
-            # print(torch.unique(label)            assert timestamp.ndim == x_s2.ndim == y_s2.ndim == 1
+            # print(torch.unique(label)            
+            assert timestamp.ndim == x_s2.ndim == y_s2.ndim == 1
             reconstruction, outputs = model(timestamp, x_s2, y_s2, region_idx)
 
         return reconstruction, outputs, label
@@ -210,9 +211,6 @@ def main_cfg(args: DictConfig):
                 print("NaNs in outputs"); break
             if torch.isnan(label).any():
                 print("NaNs in label"); break
-            # print("outputs:", outputs.shape)
-            # print("weights:", class_weights_tensor.shape)
-            # print("labels unique:", torch.unique(label))
             if "BFPDensity" in args.task:
                 train_loss = criterion(outputs.squeeze().float(), label)
             else:
@@ -245,6 +243,14 @@ def main_cfg(args: DictConfig):
             with torch.no_grad():
                 for batch in tqdm(validation_dataloader,total=len(validation_dataloader),desc=f"Epoch {epoch+1}/{args.epochs} - Validation"):
 
+                    # if "local" in args.task: 
+                    #     region_idx= 0
+                    # elif "joint" and "PASTIS" in args.task:
+                    #     region_idx = 0 if "T31TFJ" in args.task else 1 if "T32ULU" in args.task else 2 if "T31TFM" in args.task else 3
+                    # elif "joint" and "BurnScars" in args.task:
+                    #     region_idx = 0 if "T11SMT" in args.task else 1 if "T16REV" in args.task else None
+                    # elif "joint" and "BFP" in args.task:
+                    #     region_idx = 0 if "T31TFJ" in args.task else 1 if "T32ULU" in args.task else 2 if "T31TFM" in args.task else 3
                     _ , outputs, label = forward_model(model, args.model_type, batch, region_idx)
                 if "BFPDensity" in args.task:
                     metrictracker.update(outputs.squeeze(), label.squeeze())

@@ -47,3 +47,119 @@ class DownstreamModel_CRHead(nn.Module):
             reconstruction, seg = self.model(timestamps, x0, y0, region_idx, mosaic_width=10980)
         return reconstruction, seg
 
+
+
+        if adaption_strategy == "replace_final_block":
+            self.new_head = nn.Sequential(
+                # ---- extra capacity at full width ----
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                # ---- down to half width (deeper than before) ----
+                nn.Conv2d(trunk_out_ch, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                # ---- down to quarter width (extra depth) ----
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 4, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 4),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 4, trunk_out_ch // 4, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 4),
+                nn.ReLU(inplace=True),
+
+                # ---- classifier ----
+                nn.Conv2d(trunk_out_ch // 4, num_classes, kernel_size=3, padding=1),
+            )
+
+        elif adaption_strategy == "replace_final_block_4x":
+            self.new_head = nn.Sequential(
+                # ---- extra capacity at full width ----
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch, trunk_out_ch, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch),
+                nn.ReLU(inplace=True),
+
+                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+
+                # ---- half width (deeper than before) ----
+                nn.Conv2d(trunk_out_ch, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 2, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 2),
+                nn.ReLU(inplace=True),
+
+                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+
+                # ---- quarter width (extra depth) ----
+                nn.Conv2d(trunk_out_ch // 2, trunk_out_ch // 4, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 4),
+                nn.ReLU(inplace=True),
+
+                nn.Conv2d(trunk_out_ch // 4, trunk_out_ch // 4, kernel_size=3, padding=1),
+                group_norm(trunk_out_ch // 4),
+                nn.ReLU(inplace=True),
+
+                # ---- classifier ----
+                nn.Conv2d(trunk_out_ch // 4, num_classes, kernel_size=3, padding=1),
+            )
+        else:
+            raise ValueError(f"Unknown adaption_strategy: {adaption_strategy}")
+        
+        
+        # Init the weights for new head:
+        for m in self.new_head.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)

@@ -18,18 +18,18 @@ seed: 42
 task: none   # PASTIS_joint_T32ULU or PASTIS_joint_T31TFM or PASTIS_joint_T31TFJ   taskName_pretrainingType_finetuningRegion
 model_type: replace_final_block
 train_area_bounds: none
-weightedSegmentation: none
-val_folds: [1]
+weightedSegmentation: None
+val_folds: None
 
-logging_directory: /home/user/results_local/finetuning_results
+logging_directory: /home/user/results_local/finetuning_results_PASTIS_v2
 labels_path: masks/PASTIS
 # deep learning related
 lossfunction: cross_entropy
 batchsize: 16
 learningrate: 0.0001
 num_workers: 8
-epochs: 70
+epochs: 100
 warmup_epochs: 2
 gpu_id: none
-validate_every_n_epochs: 2
-plot_every_n_epochs: 5
+validate_every_n_epochs: 5
+plot_every_n_epochs: 10
