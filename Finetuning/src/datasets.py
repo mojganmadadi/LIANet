@@ -1,7 +1,7 @@
 from curses import window
 from shapely import bounds, buffer
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler, default_collate
 import os
 from tqdm import tqdm 
 import numpy as np
@@ -662,6 +662,209 @@ class PASTIS(Dataset):
             "fold": s["fold"],
             "patch_id": s["patch_id"]
         }
+
+
+class PASTISJoint(Dataset):
+    """PASTIS samples from multiple regions with fixed pretrained region IDs.
+
+    ``region_list`` follows the pretraining format, for example
+    ``{0: ["T31TFJ"], 1: ["T32ULU"], 2: ["T31TFM"], 3: ["T30UXV"]}``.
+    During training, ``exclude_tilename`` is held out; during validation it is
+    the only region included.
+    """
+
+    def __init__(
+        self,
+        top_dir,
+        region_list,
+        labels,
+        train_val_key,
+        val_folds,
+        exclude_tilename=None,
+        train_regions=None,
+        eval_regions=None,
+    ):
+        self.top_dir = top_dir
+        self.region_list = {
+            int(region_idx): list(tile_names)
+            for region_idx, tile_names in region_list.items()
+        }
+        self.labels = labels
+        self.train_val_key = train_val_key
+        self.val_folds = val_folds
+        self.exclude_tilename = exclude_tilename
+        self.train_regions = set(train_regions) if train_regions is not None else None
+        self.eval_regions = set(eval_regions) if eval_regions is not None else None
+        self.metadata_path = os.path.join(top_dir, labels, "metadata.geojson")
+
+        if not self.region_list:
+            raise ValueError("region_list must contain at least one region")
+        if any(len(tile_names) != 1 for tile_names in self.region_list.values()):
+            raise ValueError("PASTISJoint expects one PASTIS tile directory per region index")
+        if train_val_key not in ("train", "val"):
+            raise ValueError("train_val_key must be 'train' or 'val'")
+
+        selected_regions = []
+        for region_idx, tile_names in self.region_list.items():
+            tile_name = tile_names[0]
+            is_excluded = tile_name == exclude_tilename
+            is_selected_for_training = (
+                self.train_regions is None or tile_name in self.train_regions
+            )
+            is_selected_for_evaluation = (
+                self.eval_regions is None
+                and is_excluded
+            ) or (
+                self.eval_regions is not None
+                and tile_name in self.eval_regions
+            )
+            if (train_val_key == "train" and not is_excluded and is_selected_for_training) or (
+                train_val_key == "val" and is_selected_for_evaluation
+            ):
+                selected_regions.append((region_idx, tile_name))
+        if not selected_regions:
+            raise ValueError(
+                f"No regions selected for {train_val_key}; "
+                f"check region_list and exclude_tilename={exclude_tilename!r}"
+            )
+
+        metadata_gdf = gpd.read_file(self.metadata_path)
+        patch_id_col = "ID_PATCH"
+        if "fold" in metadata_gdf.columns:
+            fold_col = "fold"
+        elif "Fold" in metadata_gdf.columns:
+            fold_col = "Fold"
+        else:
+            raise ValueError("No fold column found in metadata.")
+
+        t0 = datetime(2015, 1, 1)
+        self.samples = []
+        for region_idx, tile_name in selected_regions:
+            s2_dir = os.path.join(top_dir, tile_name)
+            labels_path = os.path.join(top_dir, labels, tile_name)
+            image_tiles = sorted(
+                file_name for file_name in os.listdir(s2_dir)
+                if file_name.endswith(".tif")
+            )
+            label_files = sorted(
+                file_name for file_name in os.listdir(labels_path)
+                if file_name.endswith(".tif")
+            )
+            if not image_tiles or not label_files:
+                raise ValueError(f"Missing PASTIS images or labels for region {tile_name}")
+
+            with rasterio.open(os.path.join(s2_dir, image_tiles[0])) as ref_img:
+                ref_transform = ref_img.transform
+
+            for image_name in tqdm(
+                image_tiles,
+                desc=f"Building {train_val_key} samples for {tile_name}",
+            ):
+                image_path = os.path.join(s2_dir, image_name)
+                dt = datetime.strptime(
+                    os.path.splitext(image_name)[0], "%Y%m%dT%H%M%S"
+                )
+                doy = (dt - t0).total_seconds() / 86400.0
+                with rasterio.open(image_path) as image_ds:
+                    for label_name in label_files:
+                        patch_id_str = label_name.split("_")[1].split(".")[0]
+                        if metadata_gdf[patch_id_col].dtype.kind in "iu" and patch_id_str.isdigit():
+                            patch_id = int(patch_id_str)
+                        else:
+                            patch_id = patch_id_str
+                        matches = metadata_gdf[metadata_gdf[patch_id_col] == patch_id]
+                        if matches.empty:
+                            raise ValueError(f"Patch {patch_id} is missing from metadata")
+                        fold = matches[fold_col].values[0]
+                        include = val_folds is None or (
+                            train_val_key == "train" and fold not in val_folds
+                        ) or (
+                            train_val_key == "val" and fold in val_folds
+                        )
+                        if not include:
+                            continue
+                        with rasterio.open(os.path.join(labels_path, label_name)) as label_ds:
+                            label_patch = label_ds.read().squeeze()
+                            row_min, col_min = rasterio.transform.rowcol(
+                                ref_transform,
+                                label_ds.bounds.left,
+                                label_ds.bounds.top,
+                            )
+                            image_patch = image_ds.read(
+                                window=Window(col_min, row_min, 128, 128)
+                            )
+                        self.samples.append({
+                            "doy": doy,
+                            "x": col_min,
+                            "y": row_min,
+                            "patch_id": patch_id,
+                            "fold": fold,
+                            "region_idx": region_idx,
+                            "region": tile_name,
+                            "s2_img_patch": image_patch,
+                            "label": label_patch,
+                        })
+
+        if not self.samples:
+            raise ValueError(f"No PASTIS samples found for {train_val_key}")
+        np.random.shuffle(self.samples)
+        print(f"Found {len(self.samples)} PASTIS joint samples for {train_val_key}")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        return {
+            "delta_days": torch.tensor(sample["doy"], dtype=torch.float32),
+            "x_s2": sample["x"],
+            "y_s2": sample["y"],
+            "s2data": _preprocess_S2(sample["s2_img_patch"]),
+            "label": sample["label"],
+            "fold": sample["fold"],
+            "patch_id": sample["patch_id"],
+            "region_idx": torch.tensor(sample["region_idx"], dtype=torch.long),
+            "region": sample["region"],
+        }
+
+
+class RegionBatchSampler(Sampler):
+    """Yield batches whose samples all use the same pretrained region table."""
+
+    def __init__(self, dataset, batch_size, drop_last=False):
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+        self.indices_by_region = {}
+        for index, sample in enumerate(dataset.samples):
+            self.indices_by_region.setdefault(sample["region_idx"], []).append(index)
+
+    def __iter__(self):
+        batches = []
+        for indices in self.indices_by_region.values():
+            shuffled = np.random.permutation(indices).tolist()
+            for start in range(0, len(shuffled), self.batch_size):
+                batch = shuffled[start:start + self.batch_size]
+                if len(batch) == self.batch_size or not self.drop_last:
+                    batches.append(batch)
+        np.random.shuffle(batches)
+        yield from batches
+
+    def __len__(self):
+        return sum(
+            len(indices) // self.batch_size
+            if self.drop_last
+            else (len(indices) + self.batch_size - 1) // self.batch_size
+            for indices in self.indices_by_region.values()
+        )
+
+
+def collate_region_batch(samples):
+    batch = default_collate(samples)
+    region_indices = batch["region_idx"]
+    if not torch.all(region_indices == region_indices[0]):
+        raise ValueError("All samples in a batch must belong to the same region")
+    batch["region_idx"] = region_indices[0]
+    return batch
     
 class BurnScars(Dataset):
     def __init__(self,

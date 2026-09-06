@@ -7,10 +7,30 @@ TOP_DIR = {"dynamic_world": "/home/user/data_shared/T32UPU",
           "PASTIS_T31TFM":"/home/user/data_shared",
           "PASTIS_T30UXV":"/home/user/data_shared",
           "PASTIS_T31TFJ":"/home/user/data_shared",
+          "PASTIS_joint_T31TFJ":"/home/user/data_shared",
+          "PASTIS_joint_T32ULU":"/home/user/data_shared",
+          "PASTIS_joint_T31TFM":"/home/user/data_shared",
+          "PASTIS_joint_T30UXV":"/home/user/data_shared",
           "BurnScars":"/home/user/data_shared"}
 
 fourseason_s2_list   = ['20240619T102031.tif', '20220715T101559.tif', '20250219T101959.tif', '20220615T101559.tif', '20251123T102401.tif', '20240225T101919.tif', '20231003T101841.tif', '20250619T101559.tif', '20240828T102021.tif', '20220630T102041.tif', '20230531T101559.tif', '20250808T101559.tif', '20251002T101851.tif', '20250430T101559.tif', '20220824T101559.tif', '20230625T101601.tif', '20240813T101559.tif', '20250510T101559.tif', '20220804T101559.tif', '20230819T101609.tif', '20240907T102021.tif', '20230210T102049.tif', '20240729T102021.tif', '20231207T102319.tif', '20250818T101559.tif', '20220814T101559.tif', '20230715T101601.tif', '20231013T101951.tif', '20241221T102339.tif', '20250405T102041.tif', '20230908T101559.tif', '20230928T101719.tif', '20221018T102031.tif', '20240709T102031.tif', '20240205T102129.tif', '20220809T102041.tif', '20240624T101559.tif', '20250813T102041.tif', '20250609T101559.tif', '20250318T101751.tif', '20230824T101601.tif', '20250407T101701.tif', '20220725T101559.tif']
 
+PASTIS_REGION_IDS = {
+    "T31TFJ": 0,
+    "T32ULU": 1,
+    "T31TFM": 2,
+    "T30UXV": 3,
+}
+pastis_joint_region_list = {
+    region_idx: [tile_name]
+    for tile_name, region_idx in PASTIS_REGION_IDS.items()
+}
+PASTIS_joint_exclude_tilename = {
+    "PASTIS_joint_T31TFJ": "T31TFJ",
+    "PASTIS_joint_T32ULU": "T32ULU",
+    "PASTIS_joint_T31TFM": "T31TFM",
+    "PASTIS_joint_T30UXV": "T30UXV",
+}
 
 s2_tiles = {"dynamic_world": fourseason_s2_list,
           "meta_canopy_height": fourseason_s2_list,
@@ -21,6 +41,10 @@ s2_tiles = {"dynamic_world": fourseason_s2_list,
           "PASTIS_T31TFM": "T31TFM", # or "T31TFM"
           "PASTIS_T30UXV": "T30UXV",
           "PASTIS_T31TFJ": "T31TFJ",
+          "PASTIS_joint_T31TFJ": pastis_joint_region_list,
+          "PASTIS_joint_T32ULU": pastis_joint_region_list,
+          "PASTIS_joint_T31TFM": pastis_joint_region_list,
+          "PASTIS_joint_T30UXV": pastis_joint_region_list,
           "BurnScars": "T11SMT"}
 # The dynamic world label's format is "dw_YYYYMMDD_seasonIndex_month.tif"
 labels = {"dynamic_world": ["dw_0.tif", "dw_1.tif", "dw_2.tif", "dw_3.tif"],
@@ -32,6 +56,10 @@ labels = {"dynamic_world": ["dw_0.tif", "dw_1.tif", "dw_2.tif", "dw_3.tif"],
           "PASTIS_T31TFM": "masks/PASTIS",
           "PASTIS_T30UXV": "masks/PASTIS",
           "PASTIS_T31TFJ": "masks/PASTIS",
+          "PASTIS_joint_T31TFJ": "masks/PASTIS",
+          "PASTIS_joint_T32ULU": "masks/PASTIS",
+          "PASTIS_joint_T31TFM": "masks/PASTIS",
+          "PASTIS_joint_T30UXV": "masks/PASTIS",
           "BurnScars": "masks/BurnScars"}
 
 # This dictionary includes the paths to the pretrained model checkpoints folders (do not put the .pt file!)
@@ -47,6 +75,14 @@ models = {
     "full_tile_modified_PASTIS_T32ULU" :"/home/user/results_shared/fourier_learned_4regions/2026-03-18_19-06-01",
     "full_tile_modified_PASTIS_T30UXV" :"/home/user/results_shared/fourier_learned_4regions/2026-03-18_19-06-01",
     "full_tile_modified_PASTIS_T31TFJ" :"/home/user/results_shared/fourier_learned_T31TFJ_CRHead/2026-04-01_14-49-35",
+    "PASTIS_local_T31TFM" :"/home/user/results_shared/fourier_learned_T31TFM/2026-04-08_00-13-56",
+    "PASTIS_local_T32ULU" :"/home/user/results_shared/fourier_learned_T32ULU/2026-04-04_09-21-54",
+    "PASTIS_local_T30UXV" :"/home/user/results_shared/fourier_learned_T30UXV/2026-04-06_04-50-55",
+    "PASTIS_local_T31TFJ" :"/home/user/results_shared/fourier_learned_T31TFJ/2026-04-02_13-40-05",
+    "PASTIS_joint_T31TFJ" :"/home/user/results_shared/fourier_learned_4regions/2026-03-18_19-06-01",
+    "PASTIS_joint_T32ULU" :"/home/user/results_shared/fourier_learned_4regions/2026-03-18_19-06-01",
+    "PASTIS_joint_T31TFM" :"/home/user/results_shared/fourier_learned_4regions/2026-03-18_19-06-01",
+    "PASTIS_joint_T30UXV" :"/home/user/results_shared/fourier_learned_4regions/2026-03-18_19-06-01",
     "full_tile_modified_BurnScars" :"/home/user/results_shared/fourier_learned_HLS_USA/2026-02-22_13-57-00",
     }
 
@@ -67,6 +103,10 @@ num_classes = {
     "PASTIS_T31TFM": 20,
     "PASTIS_T30UXV": 20,
     "PASTIS_T31TFJ": 20,
+    "PASTIS_joint_T31TFJ": 20,
+    "PASTIS_joint_T32ULU": 20,
+    "PASTIS_joint_T31TFM": 20,
+    "PASTIS_joint_T30UXV": 20,
     "BurnScars": 2
     }
 
@@ -80,5 +120,9 @@ activation_functions = {
     "PASTIS_T31TFM": "none",
     "PASTIS_T30UXV": "none",
     "PASTIS_T31TFJ": "none",
+    "PASTIS_joint_T31TFJ": "none",
+    "PASTIS_joint_T32ULU": "none",
+    "PASTIS_joint_T31TFM": "none",
+    "PASTIS_joint_T30UXV": "none",
     "BurnScars": "none"
     }

@@ -1,2 +1,9 @@
 __pycache__/
 results/
+*.pyc
+*.log
+events.out.tfevents.*
+Finetuning/results/
+Finetuning/src/results/
+Finetuning/src/finetuning_results/
+Finetuning/src/multi_region/
