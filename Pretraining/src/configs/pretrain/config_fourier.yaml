@@ -15,16 +15,16 @@ seed: 44
 deterministic: True
 benchmark: False
 
-nEpochs: 300 #1600
+nEpochs: 400 #1600
 temporal_embedding_mode: "fourier_learned"
 # where to store results
 outputpath: "/home/user/results_shared"
-experimentname: None #${temporal_embedding_mode}_T31TFJ_CRHead
+experimentname: fourier_learned_HLS_T11SMT #${temporal_embedding_mode}_T31TFJ_CRHead
 
 validation_epochs: 1 # Which epochs to run validation
 # special_save_Epochs: [50, 100,200,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600] # Which chechpoints to save permanently, given as a list
-special_save_Epochs: [50, 100,200,300,] # Which chechpoints to save permanently, given as a list  
-region_list: None #{0: ["T31TFJ"]}
+special_save_Epochs: [50, 100,200,300,400] # Which chechpoints to save permanently, given as a list  
+region_list: {0: ['T11SMT']} # 0: ['T11SMT']
 
 trainroutine:
   _target_: "trainroutines.pretraining.LIANetTrainer"

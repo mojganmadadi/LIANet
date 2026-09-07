@@ -13,25 +13,25 @@ hydra:
   run:  
     dir: .
 
-seed: 42
+seed: 423
 
-task: BurnScars
+task: BurnScars_joint_T16REV
 model_type: replace_final_block
-checkpoint_area: "full_tile_modified_BurnScars" 
+# checkpoint_area: "full_tile_modified_BurnScars" 
 train_area_bounds: none
 weightedSegmentation: False
 val_folds: None
 
-logging_directory: /home/user/results_local/finetuning_results
+logging_directory: /home/user/results_local/finetuning_results_BurnScars_valVisualization
 labels_path: masks/BurnScars
 # deep learning related
 lossfunction: cross_entropy
 batchsize: 32
-learningrate: 0.0001
+learningrate: 0.0003
 
 num_workers: 8
-epochs: 50
+epochs: 30
 warmup_epochs: 0
 gpu_id: 1
-validate_every_n_epochs: 1
-plot_every_n_epochs: 1
+validate_every_n_epochs: 2
+plot_every_n_epochs: 2
