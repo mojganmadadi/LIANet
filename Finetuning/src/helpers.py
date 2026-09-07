@@ -1,7 +1,7 @@
 import os
 
-from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster, PASTIS, BurnScars
-from models.models_finetune import DownstreamModel, UNet, MicroUNet, DownstreamModel_CRHead
+from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster, PASTIS, PASTISJoint, BurnScars
+from models.models_finetune import DownstreamModel, UNet, MicroUNet
 
 
 import numpy as np
@@ -60,7 +60,11 @@ def load_train_eval_datasets(
     train_area_bounds, 
     COMPLETE_TILESIZE, 
     exclude_px1_px2=None,
-    val_folds=None,):
+    val_folds=None,
+    exclude_tilename=None,
+    train_regions=None,
+    eval_regions=None,
+):
     
     if task == "dynamic_world":
         train_ds = DynamicWorld(
@@ -159,6 +163,27 @@ def load_train_eval_datasets(
             train_val_key="val",
             complete_tile_size=COMPLETE_TILESIZE,
         )
+    elif task.startswith("PASTIS_joint_"):
+        train_ds = PASTISJoint(
+            top_dir=TOP_DIR,
+            region_list=S2_TILES,
+            labels=LABELS,
+            train_val_key="train",
+            val_folds=val_folds,
+            exclude_tilename=exclude_tilename,
+            train_regions=train_regions,
+            eval_regions=eval_regions,
+        )
+        val_ds = PASTISJoint(
+            top_dir=TOP_DIR,
+            region_list=S2_TILES,
+            labels=LABELS,
+            train_val_key="val",
+            val_folds=val_folds,
+            exclude_tilename=exclude_tilename,
+            train_regions=train_regions,
+            eval_regions=eval_regions,
+        )
     elif task == "PASTIS_T32ULU" or task == "PASTIS_T31TFM" or task == "PASTIS_T30UXV" or task == "PASTIS_T31TFJ":
         train_ds = PASTIS(
             top_dir=TOP_DIR,
@@ -203,10 +228,10 @@ def load_model_class(
             if not model_type == "replace_final_block_4x":
                 raise ValueError("Footprint classification must be run with 4x model")
         
-        model = DownstreamModel_CRHead(
+        model = DownstreamModel(
             model_path=MODEL_PATH,
             checkpoint_path_relative="model_checkpoints/latest_validation_checkpoint.pt",
-            # adaption_strategy=model_type,
+            adaption_strategy=model_type,
             num_classes=NUM_CLASSES,
             # activation=ACTIVATION_FUNCTION,
         )

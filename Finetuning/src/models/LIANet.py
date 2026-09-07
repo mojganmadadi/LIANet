@@ -108,7 +108,7 @@ class HashTableEncoder2D(nn.Module):
             scales = (self.level_N_f / float(mosaic_width)).view(1, L, 1)  # [1, L, 1]
 
         TL = self.tables[region_idx]   # [B, T, F]
-        TL = TL.unsqueeze(0).expand(B, -1, -1)  # [B, T, F]
+        TL = TL.expand(B, -1, -1)  # [B, T, F]
 
 
         if self.vectorized:
