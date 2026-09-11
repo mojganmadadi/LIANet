@@ -1,6 +1,4 @@
 import json
-from tkinter.messagebox import IGNORE
-from shapely import bounds, buffer
 import torch
 from torch.utils.data import Dataset
 import os
@@ -8,6 +6,7 @@ from tqdm import tqdm
 import numpy as np
 from datetime import datetime
 import math
+from pathlib import Path
 import geopandas as gpd
 import rasterio
 from rasterio.windows import Window, from_bounds
@@ -15,7 +14,6 @@ from rasterio.windows import bounds as window_bounds
 from utils import s2_to_rgb, _preprocess_S2
 from rasterio.warp import reproject, Resampling
 from utils import read_and_normalize_s2, get_sample_locations
-
 
 class DynamicWorld(Dataset):
     def __init__(self,
@@ -262,6 +260,17 @@ class BuildingBinaryRaster(Dataset):
             samples_dir,
             f"{self.s2_tile_name}_{train_val_key}_samples_10perc.json"
         )
+        if not os.path.exists(samples_path):
+            fallback_samples_dir = os.path.join(
+                os.path.dirname(os.path.dirname(top_dir)),
+                "BFP_Binary",
+            )
+            fallback_samples_path = os.path.join(
+                fallback_samples_dir,
+                f"{self.s2_tile_name}_{train_val_key}_samples_10perc.json",
+            )
+            if os.path.exists(fallback_samples_path):
+                samples_path = fallback_samples_path
 
         with open(samples_path, "r") as f:
             self.samples = json.load(f)
@@ -300,6 +309,14 @@ class BuildingBinaryRaster(Dataset):
             "BuildingFootprints",
             self.label_name
         )
+        if not os.path.exists(label_path):
+            fallback_label_path = os.path.join(
+                os.path.dirname(os.path.dirname(self.top_dir)),
+                "BFP_Binary",
+                self.label_name,
+            )
+            if os.path.exists(fallback_label_path):
+                label_path = fallback_label_path
 
         with rasterio.open(s2_path) as src:
             win = Window(
@@ -444,6 +461,17 @@ class BuildingCoverageRaster(Dataset):
             samples_dir,
             f"{self.s2_tile_name}_{train_val_key}_samples_10perc.json"
         )
+        if not os.path.exists(samples_path):
+            fallback_samples_dir = os.path.join(
+                os.path.dirname(os.path.dirname(top_dir)),
+                "BFP_Binary",
+            )
+            fallback_samples_path = os.path.join(
+                fallback_samples_dir,
+                f"{self.s2_tile_name}_{train_val_key}_samples_10perc.json",
+            )
+            if os.path.exists(fallback_samples_path):
+                samples_path = fallback_samples_path
 
         with open(samples_path, "r") as f:
             self.samples = json.load(f)
@@ -482,6 +510,14 @@ class BuildingCoverageRaster(Dataset):
             "BuildingFootprints",
             self.label_name
         )
+        if not os.path.exists(label_path):
+            fallback_label_path = os.path.join(
+                os.path.dirname(os.path.dirname(self.top_dir)),
+                "BFP_Binary",
+                self.label_name,
+            )
+            if os.path.exists(fallback_label_path):
+                label_path = fallback_label_path
 
         with rasterio.open(s2_path) as src:
             win = Window(
@@ -532,18 +568,33 @@ class PASTIS(Dataset):
                  val_folds,
                  num_classes=19,      # classes 0–18
                  ignore_index=255,
-                 compute_weights=True):
+                 compute_weights=True,
+                 cache_samples=True,
+                 sample_cache_dir=None):
 
 
         
         self.top_dir = top_dir # "/home/user/data_shared"
         self.s2_tiles = s2_tiles # "T32ULU"
-        self.labels_path = os.path.join(top_dir, labels, self.s2_tiles)
+        label_tile_name = os.path.basename(os.path.normpath(self.s2_tiles))
+        self.labels_path = os.path.join(top_dir, labels, label_tile_name)
         self.metadata_path = os.path.join(top_dir, labels, "metadata.geojson")
+        if not os.path.exists(self.metadata_path):
+            self.metadata_path = os.path.join(top_dir, "metadata.geojson")
         self.train_val_key = train_val_key
         self.val_folds = val_folds # [2,3] list of integers from 1 to 5
         self.num_classes = num_classes
         self.ignore_index = ignore_index
+        cache_path = self._sample_cache_path(sample_cache_dir)
+        if cache_samples and cache_path.exists():
+            print(f"Loading PASTIS sample cache: {cache_path}")
+            cache = torch.load(cache_path, map_location="cpu", weights_only=False)
+            self.samples = cache["samples"]
+            self.class_counts = cache.get("class_counts")
+            self.class_weights = cache.get("class_weights")
+            print(f"Found {len(self.samples)} samples for {train_val_key}")
+            return
+
         class_counts = np.zeros(num_classes, dtype=np.int64)
 
         # take the first image in the tiles path as reference
@@ -652,6 +703,30 @@ class PASTIS(Dataset):
         else:
             self.class_counts = None
             self.class_weights = None
+
+        if cache_samples:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+            torch.save(
+                {
+                    "samples": self.samples,
+                    "class_counts": self.class_counts,
+                    "class_weights": self.class_weights,
+                },
+                tmp_path,
+            )
+            os.replace(tmp_path, cache_path)
+            print(f"Wrote PASTIS sample cache: {cache_path}")
+
+    def _sample_cache_path(self, sample_cache_dir):
+        if sample_cache_dir is None:
+            sample_cache_dir = Path(self.top_dir) / "_lianet_sample_cache"
+        else:
+            sample_cache_dir = Path(sample_cache_dir)
+        folds = "-".join(str(int(fold)) for fold in self.val_folds) if self.val_folds else "none"
+        tile = os.path.basename(os.path.normpath(self.s2_tiles))
+        name = f"PASTIS_{tile}_{self.train_val_key}_valfolds{folds}.pt"
+        return sample_cache_dir / name
 
     def __len__(self):
         return len(self.samples)
@@ -785,4 +860,292 @@ class BurnScars(Dataset):
             "label": s["label"],
             "burned_pixel_count": s["burned_pixel_count"],
         }
-    
+
+class AnnualEmbeddingDataset(Dataset):
+    def __init__(
+        self,
+        lookup_path,
+        manifest_path,
+        dataset,
+        tile,
+        train_val_key,
+        task,
+        input_source,
+        val_folds=None,
+        cache_in_memory=False,
+        embedding_root=None,
+        label_scale=4,
+        ignore_index=255,
+        tensor_cache_dir=None,
+    ):
+        import pandas as pd
+
+        lookup_path = Path(lookup_path)
+        manifest_path = Path(manifest_path)
+        self.embedding_root = (
+            Path(embedding_root)
+            if embedding_root is not None
+            else self._infer_embedding_root(lookup_path)
+        )
+        self.dataset = dataset
+        self.tile = tile
+        self.train_val_key = train_val_key
+        self.task = task
+        self.input_source = input_source
+        self.val_folds = {int(f) for f in val_folds} if val_folds else set()
+        self.label_scale = int(label_scale)
+        self.ignore_index = int(ignore_index)
+        self.expected_channels = {"alphaearth": 64, "tessera": 128}[input_source]
+        self.class_weights = None
+
+        manifest = pd.read_parquet(manifest_path)
+        lookup = pd.read_parquet(lookup_path)
+
+        manifest = manifest[
+            (manifest["dataset"] == dataset)
+            & (manifest["tile"] == tile)
+        ].reset_index(drop=True)
+        lookup = lookup[
+            (lookup["dataset"] == dataset)
+            & (lookup["tile"] == tile)
+        ].reset_index(drop=True)
+
+        if dataset == "PASTIS" and self.val_folds:
+            folds = pd.to_numeric(lookup["fold"], errors="coerce")
+            if train_val_key == "train":
+                lookup = lookup[~folds.isin(self.val_folds)]
+            elif train_val_key == "val":
+                lookup = lookup[folds.isin(self.val_folds)]
+            else:
+                raise ValueError(f"Unsupported split for PASTIS embeddings: {train_val_key}")
+        else:
+            lookup = lookup[lookup["data_split"] == train_val_key]
+        lookup = lookup.reset_index(drop=True)
+
+        # The manifest is a unique annual embedding-file index. The lookup
+        # table is the supervised sample table and may contain many rows that
+        # share one annual embedding file.
+        manifest_keys = ["dataset", "tile", "embedding_year", "grid_id"]
+        embedding_index = manifest[
+            manifest_keys + ["embedding_path"]
+        ].drop_duplicates(subset=manifest_keys)
+        self.lookup = lookup.merge(
+            embedding_index,
+            on=manifest_keys,
+            how="left",
+            validate="many_to_one",
+        )
+
+        has_embedding = (
+            self.lookup["embedding_path"].notna()
+            & (self.lookup["embedding_path"].astype(str).str.len() > 0)
+        )
+        self.lookup = self.lookup[has_embedding].reset_index(drop=True)
+        before_pair_dedup = len(self.lookup)
+        pair_keys = [
+            "embedding_path",
+            "label_path",
+            "x",
+            "y",
+            "height",
+            "width",
+        ]
+        if all(key in self.lookup.columns for key in pair_keys):
+            self.lookup = self.lookup.drop_duplicates(subset=pair_keys).reset_index(drop=True)
+
+        print(
+            f"Found {len(self.lookup)} {input_source} {train_val_key} "
+            f"samples for {dataset}_{tile} ({task}); "
+            f"lookup rows={len(lookup)}, annual pairs before dedup={before_pair_dedup}, "
+            f"annual embeddings={len(embedding_index)}"
+        )
+        self.cache_in_memory = cache_in_memory
+        self._cache = self._load_or_build_tensor_cache(tensor_cache_dir) if cache_in_memory else None
+
+    def __len__(self):
+        return len(self.lookup)
+
+    def __getitem__(self, idx):
+        if self._cache is not None:
+            return self._cache[idx]
+
+        return self._load_sample(idx)
+
+    def _load_sample(self, idx):
+        row = self.lookup.iloc[idx]
+
+        embedding_path = Path(row["embedding_path"])
+        if not embedding_path.is_absolute():
+            embedding_path = self.embedding_root / embedding_path
+
+        with rasterio.open(embedding_path) as src:
+            emb = src.read().astype(np.float32)
+
+        if not np.isfinite(emb).all():
+            emb = np.nan_to_num(emb, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if emb.shape[0] != self.expected_channels:
+            raise ValueError(
+                f"Expected {self.expected_channels} {self.input_source} channels, "
+                f"got {emb.shape}"
+            )
+
+        if self.dataset == "HLS_BrunScars":
+            label, extra = self._load_burnscars_label(row, emb)
+        elif self.dataset == "PASTIS":
+            label, extra = self._load_pastis_label(row, emb)
+        elif self.dataset == "BFP":
+            label, extra = self._load_bfp_label(row, emb)
+        else:
+            raise ValueError(f"Unsupported annual embedding dataset: {self.dataset}")
+
+        sample = {
+            "s2data": torch.from_numpy(emb).float(),
+            "label": torch.from_numpy(label),
+            "delta_days": torch.tensor(
+                self._delta_days(str(row["image_timestamp"])),
+                dtype=torch.float32,
+            ),
+            "x_s2": torch.tensor(int(row["x"]), dtype=torch.long),
+            "y_s2": torch.tensor(int(row["y"]), dtype=torch.long),
+            "time_str": str(row["image_timestamp"]),
+        }
+        sample.update(extra)
+        return sample
+
+    def _load_or_build_tensor_cache(self, tensor_cache_dir):
+        cache_path = self._tensor_cache_path(tensor_cache_dir)
+        if cache_path.exists():
+            print(f"Loading tensor cache: {cache_path}")
+            return torch.load(cache_path, map_location="cpu", weights_only=False)
+
+        cache = [self._load_sample(i) for i in tqdm(range(len(self.lookup)), desc="Caching embeddings")]
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        torch.save(cache, tmp_path)
+        os.replace(tmp_path, cache_path)
+        print(f"Wrote tensor cache: {cache_path}")
+        return cache
+
+    def _tensor_cache_path(self, tensor_cache_dir):
+        if tensor_cache_dir is None:
+            tensor_cache_dir = Path(self.embedding_root) / "outputs" / "tensor_cache"
+        else:
+            tensor_cache_dir = Path(tensor_cache_dir)
+        fold_key = "nofolds"
+        if self.val_folds:
+            fold_key = "folds" + "-".join(str(f) for f in sorted(self.val_folds))
+        name = (
+            f"{self.dataset}_{self.tile}_{self.input_source}_{self.train_val_key}_"
+            f"{fold_key}_{self.task}_lookupv2_n{len(self.lookup)}.pt"
+        )
+        return tensor_cache_dir / name
+
+    @staticmethod
+    def _infer_embedding_root(lookup_path):
+        path = lookup_path.expanduser()
+        parts = path.parts
+        if "outputs" in parts:
+            outputs_idx = parts.index("outputs")
+            return Path(*parts[:outputs_idx])
+        if path.parent.name == "manifests" and path.parent.parent.name == "outputs":
+            return path.parent.parent.parent
+        raise ValueError(
+            "Could not infer embedding root from lookup_path. "
+            "Pass embedding_root explicitly or keep lookup.parquet under "
+            "<embedding_root>/outputs/manifests/."
+        )
+
+    @staticmethod
+    def _delta_days(timestamp):
+        dt = datetime.strptime(timestamp, "%Y%m%dT%H%M%S")
+        t0 = datetime(2015, 1, 1)
+        return (dt - t0).total_seconds() / 86400.0
+
+    def _load_burnscars_label(self, row, emb):
+        # row["x"], row["y"] are S2-grid coordinates.
+        # Convert the S2 window to geographic bounds, then read the matching label window.
+        with rasterio.open(row["source_s2_path"]) as s2_src:
+            s2_window = Window(
+                int(row["x"]),
+                int(row["y"]),
+                int(row["width"]),
+                int(row["height"]),
+            )
+            left, bottom, right, top = window_bounds(s2_window, s2_src.transform)
+
+        with rasterio.open(row["label_path"]) as label_src:
+            label_window = from_bounds(
+                left,
+                bottom,
+                right,
+                top,
+                transform=label_src.transform,
+            ).round_offsets().round_lengths()
+
+            label = label_src.read(1, window=label_window).astype(np.int64)
+
+        label[label == -1] = 0
+        label = (label > 0).astype(np.int64)
+
+        self._assert_label_shape(label, emb, row)
+        burned_pixel_count = float((label > 0).sum()) / float(label.size) * 100.0
+        return label, {
+            "burned_pixel_count": torch.tensor(burned_pixel_count, dtype=torch.float32)
+        }
+
+    def _load_pastis_label(self, row, emb):
+        with rasterio.open(row["label_path"]) as label_src:
+            label = label_src.read(1).astype(np.int64)
+
+        label[label == 19] = self.ignore_index
+        valid = ((label >= 0) & (label <= 18)) | (label == self.ignore_index)
+        if not valid.all():
+            raise ValueError(f"Unexpected PASTIS labels: {np.unique(label[~valid])}")
+
+        self._assert_label_shape(label, emb, row)
+        return label, {
+            "fold": torch.tensor(int(row["fold"]), dtype=torch.long),
+            "patch_id": Path(row["label_path"]).stem.split("_", 1)[1],
+        }
+
+    def _load_bfp_label(self, row, emb):
+        x = int(row["x"])
+        y = int(row["y"])
+        height = int(row["height"])
+        width = int(row["width"])
+        scale = self.label_scale
+
+        with rasterio.open(row["label_path"]) as label_src:
+            win = Window(x * scale, y * scale, width * scale, height * scale)
+            label_2p5m = label_src.read(1, window=win)
+
+        if "BFPDensity" in self.task:
+            label_2p5m = (label_2p5m > 0).astype(np.float32)
+            label = label_2p5m.reshape(height, scale, width, scale).mean(axis=(1, 3))
+            label = label.astype(np.float32)
+            self._assert_label_shape(label, emb, row)
+        else:
+            label = (label_2p5m > 0).astype(np.int64)
+            expected = (emb.shape[1] * scale, emb.shape[2] * scale)
+            if label.shape != expected:
+                raise ValueError(
+                    f"Shape mismatch: emb={emb.shape}, label={label.shape}, "
+                    f"expected_label={expected}, row={row.to_dict()}"
+                )
+        return label, {}
+
+    @staticmethod
+    def _assert_label_shape(label, emb, row):
+        if label.shape != emb.shape[1:]:
+            raise ValueError(
+                f"Shape mismatch: emb={emb.shape}, label={label.shape}, "
+                f"row={row.to_dict()}"
+            )
+
+
+class AlphaEarthBurnScars(AnnualEmbeddingDataset):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("task", "BurnScars")
+        kwargs.setdefault("input_source", "alphaearth")
+        super().__init__(*args, **kwargs)

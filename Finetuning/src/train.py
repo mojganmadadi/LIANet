@@ -7,7 +7,8 @@ from settings import *
 def main_cfg(args: DictConfig):
     # only one visible device
     import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+    if str(args.gpu_id).lower() != "none":
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
     import torch
     from torchmetrics import MetricTracker, MetricCollection
     from metrics import multiclass_segmentation_metrics, regression_metrics
@@ -32,7 +33,21 @@ def main_cfg(args: DictConfig):
     # ================= FIX SEED =================
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)   
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
+    requested_device = str(args.get("device", "auto")).lower()
+    if requested_device != "auto":
+        device = torch.device(requested_device)
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+        torch.backends.cudnn.benchmark = True
+        torch.set_float32_matmul_precision("high")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    print(f"Using device: {device}")
     # ================= OPTIONAL CONSTANTS =================
 
     
@@ -57,6 +72,7 @@ def main_cfg(args: DictConfig):
         COMPLETE_TILESIZE=COMPLETE_TILESIZE,
         exclude_px1_px2=(args.exclude_px1, args.exclude_px2) if args.task == "building_footprints" else None,
         val_folds=args.val_folds if "PASTIS" in args.task else None,
+        args=args,
     )
 
 
@@ -67,15 +83,17 @@ def main_cfg(args: DictConfig):
         batch_size=args.batchsize,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=True,
+        pin_memory=device.type == "cuda",
+        persistent_workers=True if args.num_workers > 0 else False,
+        prefetch_factor=16 if args.num_workers > 0 else None,
     )
 
     validation_dataloader = torch.utils.data.DataLoader(
     val_ds,
-    batch_size=4,
+    batch_size=int(args.get("validation_batchsize", 4)),
     shuffle=False,
     num_workers=args.num_workers,
-    pin_memory=True,
+    pin_memory=device.type == "cuda",
     persistent_workers=True if args.num_workers > 0 else False,
     prefetch_factor=16 if args.num_workers > 0 else None,
     )  
@@ -87,11 +105,12 @@ def main_cfg(args: DictConfig):
         model_type=args.model_type, 
         MODEL_PATH=models[args.task], 
         NUM_CLASSES=num_classes[args.task], 
-        ACTIVATION_FUNCTION=activation_functions[args.task])
-    
+        ACTIVATION_FUNCTION=activation_functions[args.task],
+        TERRATORCH_CONFIG=args.get("terratorch", None))
+
     summary(model)
 
-    model = model.cuda()
+    model = model.to(device)
 
     # ================= LOSS FUNCTIONS, LR SCHEDULER AND OPTIMIZER =================
 
@@ -115,7 +134,7 @@ def main_cfg(args: DictConfig):
             else: criterion = torch.nn.CrossEntropyLoss()
             
         else:
-            class_weights_tensor = train_ds.class_weights.cuda()
+            class_weights_tensor = train_ds.class_weights.to(device)
             criterion = torch.nn.CrossEntropyLoss(weight=class_weights_tensor, ignore_index=255)
         if not TASK_TYPE == "segmentation":
             raise ValueError("Cross Entropy loss can only be used for segmentation tasks")
@@ -142,11 +161,17 @@ def main_cfg(args: DictConfig):
             ignore_index=255 if "PASTIS" in args.task else None
         )
 
-    metrics = MetricCollection(list_of_metrics).cuda()
+    metrics = MetricCollection(list_of_metrics).to(device)
     metrictracker = MetricTracker(
         metrics,
         maximize=maximize_list,
     )
+    checkpoint_metric = args.get("checkpoint_metric", "mae" if TASK_TYPE == "regression" else "jaccard_macro")
+    checkpoint_mode = args.get(
+        "checkpoint_mode",
+        "min" if checkpoint_metric.lower() in {"loss", "error", "mae", "mse", "rmse"} else "max",
+    )
+    best_checkpoint_value = None
 
     # ================= SETUP TENSORBOAR =================
 
@@ -157,21 +182,21 @@ def main_cfg(args: DictConfig):
     def forward_model(model, model_type, batch, region_idx):
 
         # EITHER: classicl model like unet or so
-        if args.model_type in ["unet", "micro_unet"]:
-            
-            s2 = batch["s2data"].cuda()
-            label = batch["label"].cuda()
+        if args.model_type in ["unet", "micro_unet", "terratorch_factory"]:
+
+            s2 = batch["s2data"].to(device, non_blocking=device.type == "cuda")
+            label = batch["label"].to(device, non_blocking=device.type == "cuda")
 
             outputs = model(s2)
             reconstruction = s2
 
         # OR: our fancy super cool model witch is way better
-        else:   
+        else:
             # timestamp = batch["timestamp"] # This has changed in the new model
-            timestamp = batch["delta_days"].cuda()
-            x_s2 = batch["x_s2"].cuda()
-            y_s2 = batch["y_s2"].cuda()
-            label = batch["label"].cuda()
+            timestamp = batch["delta_days"].to(device)
+            x_s2 = batch["x_s2"].to(device)
+            y_s2 = batch["y_s2"].to(device)
+            label = batch["label"].to(device)
             # print(torch.unique(label)            
             assert timestamp.ndim == x_s2.ndim == y_s2.ndim == 1
             reconstruction, outputs = model(timestamp, x_s2, y_s2, region_idx)
@@ -260,7 +285,30 @@ def main_cfg(args: DictConfig):
             # save metrics to json and tensorboard
             metric_results = metrictracker.compute()
             for metric_name, metric_value in metric_results.items():
-                writer.add_scalar(f"val/{metric_name}", metric_value, epoch)    
+                writer.add_scalar(f"val/{metric_name}", metric_value, epoch)
+
+            # track the best validation checkpoint so downstream evaluation can load it
+            if checkpoint_metric in metric_results:
+                current = float(metric_results[checkpoint_metric])
+                improved = (
+                    best_checkpoint_value is None
+                    or (checkpoint_mode == "max" and current > best_checkpoint_value)
+                    or (checkpoint_mode == "min" and current < best_checkpoint_value)
+                )
+                if improved:
+                    best_checkpoint_value = current
+                    torch.save(
+                        {
+                            "epoch": epoch,
+                            "globalstep": globalstep,
+                            "model_state_dict": model.state_dict(),
+                            "optimizer_state_dict": optimizer.state_dict(),
+                            "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
+                            "args": dict(args) if hasattr(args, "keys") else None,
+                            checkpoint_metric: current,
+                        },
+                        os.path.join(OUTPUTDIR, "best.pt"),
+                    )
 
 
         # =================================================

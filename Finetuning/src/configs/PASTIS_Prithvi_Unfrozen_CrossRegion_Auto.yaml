@@ -1,0 +1,47 @@
+experiment_name: pastis_prithvi_unfrozen_cross_region
+base_train_config: PASTIS_TerraTorch_Prithvi
+
+output_root: ./Results/Finetuning_Automated
+python_executable: python
+
+tiles: [T31TFJ, T31TFM, T32ULU, T30UXV]
+task_template: PASTIS_joint_{tile}
+folds: [1]
+seeds: [42]
+
+train:
+  enabled: false
+  skip_existing: true
+  pass_val_folds: false
+  extra_overrides:
+    epochs: 10
+    warmup_epochs: 0
+    validate_every_n_epochs: 2
+    validation_batchsize: 16
+    cache_samples: true
+    sample_cache_dir: ${oc.env:LIANET_DATA_DIR,/dccstor/geofm-datasets/datasets/lianet_bench}/PASTIS/_lianet_sample_cache
+    plot_every_n_epochs: 999
+    num_workers: 4
+    gpu_id: 0
+    checkpoint_metric: jaccard_macro                                                                                                                                                                
+    checkpoint_mode: max   
+  variants:
+    - name: lr1e-4_bs32
+      overrides:
+        learningrate: 0.0001
+        batchsize: 32
+        gradient_accumulation_steps: 1
+
+evaluation:
+  enabled: true
+  checkpoint_name: best.pt
+  batchsize: 32
+  num_workers: 4
+  include_self_region: false
+  device: auto
+
+summary:
+  primary_metric: jaccard_macro
+
+smoke_test:
+  max_batches: 1

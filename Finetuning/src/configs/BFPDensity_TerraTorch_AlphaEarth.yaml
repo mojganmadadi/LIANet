@@ -1,0 +1,52 @@
+# AlphaEarth annual embedding template for 10 m building-density regression.
+defaults:
+  - _self_
+  - override hydra/hydra_logging: disabled
+  - override hydra/job_logging: disabled
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+seed: 42
+task: BFPDensity_local_T31TFM
+input_source: alphaearth
+model_type: terratorch_factory
+checkpoint_area: none
+train_area_bounds: none
+weightedSegmentation: false
+val_folds: null
+
+logging_directory: ${oc.env:LIANET_DATA_DIR,/dccstor/geofm-datasets/datasets/lianet_bench}/results/LIANet_results/Finetuning
+lossfunction: huber
+batchsize: 8
+gradient_accumulation_steps: 1
+learningrate: 0.005
+num_workers: 4
+epochs: 6
+warmup_epochs: 0
+gpu_id: none
+validate_every_n_epochs: 1
+plot_every_n_epochs: 1
+
+alphaearth:
+  lookup_path: ${oc.env:LIANET_DATA_DIR,/dccstor/geofm-datasets/datasets/lianet_bench}/embeddings/outputs/manifests/lookup.parquet
+  manifest_path: ${oc.env:LIANET_DATA_DIR,/dccstor/geofm-datasets/datasets/lianet_bench}/embeddings/outputs/manifests/BFP_T31TFM_alphaearth.parquet
+  cache_in_memory: false
+
+terratorch:
+  input_source: alphaearth
+  task: segmentation
+  output_activation: leakyrelu
+  freeze_backbone: true
+  freeze_decoder: false
+  model_args:
+    backbone: IdentityBackbone
+    backbone_out_channels: [64]
+    necks:
+      - name: SelectIndices
+        indices: [0]
+    decoder: FCNDecoder
+    decoder_channels: 128
+    head_dropout: 0.1

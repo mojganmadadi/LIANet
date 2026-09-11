@@ -1,0 +1,54 @@
+experiment_name: bfpdensity_terramind_embedding_final
+base_train_config: BFPDensity_TerraTorch_TerraMind_Embedding
+
+output_root: ./Results/Finetuning_Automated
+python_executable: python
+
+tiles: [T31TFM, T32ULU]
+task_template: BFPDensity_local_{tile}
+folds: [0]
+seeds: [42]
+
+train:
+  enabled: true
+  skip_existing: true
+  pass_val_folds: false
+  extra_overrides:
+    epochs: 20
+    warmup_epochs: 0
+    validate_every_n_epochs: 1
+    plot_every_n_epochs: 999
+    num_workers: 8
+    gpu_id: 0
+    checkpoint_metric: mae
+    checkpoint_mode: min
+  variants:
+    - name: lr1e-4_bs32
+      overrides:
+        learningrate: 0.0001
+        batchsize: 32
+        gradient_accumulation_steps: 1
+    - name: lr5e-5_bs32
+      overrides:
+        learningrate: 0.00005
+        batchsize: 32
+        gradient_accumulation_steps: 1
+    - name: lr5e-4_bs32
+      overrides:
+        learningrate: 0.0005
+        batchsize: 32
+        gradient_accumulation_steps: 1
+
+evaluation:
+  enabled: true
+  checkpoint_name: best.pt
+  batchsize: 4
+  num_workers: 4
+  include_self_region: false
+  device: auto
+
+summary:
+  primary_metric: mae
+
+smoke_test:
+  max_batches: 1

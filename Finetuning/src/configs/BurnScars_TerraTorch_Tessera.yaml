@@ -1,0 +1,55 @@
+# Tessera annual embedding baseline for BurnScars.
+#
+# This mirrors the AlphaEarth config shape and uses the shared annual embedding
+# dataset loader.
+defaults:
+  - _self_
+  - override hydra/hydra_logging: disabled
+  - override hydra/job_logging: disabled
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+seed: 42
+task: BurnScars_local_T11SMT
+input_source: tessera
+model_type: terratorch_factory
+checkpoint_area: none
+train_area_bounds: none
+weightedSegmentation: false
+val_folds: null
+
+logging_directory: ${oc.env:LIANET_DATA_DIR,/dccstor/geofm-datasets/datasets/lianet_bench}/results/LIANet_results/Finetuning
+labels_path: masks/BurnScars
+lossfunction: cross_entropy
+batchsize: 8
+gradient_accumulation_steps: 1
+learningrate: 0.005
+num_workers: 2
+epochs: 6
+warmup_epochs: 0
+gpu_id: none
+validate_every_n_epochs: 1
+plot_every_n_epochs: 1
+
+tessera:
+  lookup_path: ${oc.env:LIANET_DATA_DIR,/dccstor/geofm-datasets/datasets/lianet_bench}/embeddings/outputs/manifests/lookup.parquet
+  manifest_path: ${oc.env:LIANET_DATA_DIR,/dccstor/geofm-datasets/datasets/lianet_bench}/embeddings/outputs/manifests/HLS_BrunScars_T11SMT_tessera.parquet
+  cache_in_memory: true
+
+terratorch:
+  input_source: tessera
+  task: segmentation
+  freeze_backbone: true
+  freeze_decoder: false
+  model_args:
+    backbone: IdentityBackbone
+    backbone_out_channels: [128]
+    necks:
+      - name: SelectIndices
+        indices: [0]
+    decoder: FCNDecoder
+    decoder_channels: 128
+    head_dropout: 0.1

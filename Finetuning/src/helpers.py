@@ -1,8 +1,9 @@
 from datetime import datetime
 import os
 
-from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster, PASTIS, BurnScars
-from models.models_finetune import DownstreamModel, UNet, MicroUNet 
+from datasets import DynamicWorld, MetaCanopyHeights, DominantLeafTypeSegmentation, BuildingCoverageRaster, BuildingBinaryRaster, PASTIS, BurnScars, AnnualEmbeddingDataset
+from models.models_finetune import DownstreamModel, UNet, MicroUNet
+from models.terratorch_models import TerraTorchFactorySegmentationModel
 
 
 import numpy as np
@@ -61,8 +62,34 @@ def load_train_eval_datasets(
     train_area_bounds, 
     COMPLETE_TILESIZE, 
     exclude_px1_px2=None,
-    val_folds=None,):
-    
+    val_folds=None,
+    args=None):
+
+    input_source = getattr(args, "input_source", None)
+    if input_source in {"alphaearth", "tessera"}:
+        dataset_name, tile = _embedding_dataset_and_tile(args.task)
+        source_cfg = getattr(args, input_source)
+        manifest_path = _embedding_manifest_for_task(
+            source_cfg.manifest_path,
+            dataset_name,
+            tile,
+            input_source,
+        )
+
+        common = dict(
+            lookup_path=source_cfg.lookup_path,
+            manifest_path=manifest_path,
+            dataset=dataset_name,
+            tile=tile,
+            task=args.task,
+            input_source=input_source,
+            val_folds=val_folds,
+            cache_in_memory=getattr(source_cfg, "cache_in_memory", False),
+        )
+        train_ds = AnnualEmbeddingDataset(train_val_key="train", **common)
+        val_ds = AnnualEmbeddingDataset(train_val_key="val", **common)
+        return train_ds, val_ds
+
     if task == "dynamic_world":
         train_ds = DynamicWorld(
             top_dir=TOP_DIR,
@@ -151,6 +178,8 @@ def load_train_eval_datasets(
             labels=LABELS,
             train_val_key="train",
             val_folds=val_folds,
+            cache_samples=getattr(args, "cache_samples", True),
+            sample_cache_dir=getattr(args, "sample_cache_dir", None),
         )
         # all_tiles = {"T32ULU", "T31TFJ"}
         # val_tile = next(iter(all_tiles-{S2_TILES}))
@@ -161,6 +190,8 @@ def load_train_eval_datasets(
             labels=LABELS,
             train_val_key="val",
             val_folds=val_folds,
+            cache_samples=getattr(args, "cache_samples", True),
+            sample_cache_dir=getattr(args, "sample_cache_dir", None),
         )
     elif "BurnScars" in task:
         train_ds = BurnScars(
@@ -179,12 +210,45 @@ def load_train_eval_datasets(
         raise ValueError("Invalid task")
     return train_ds, val_ds
 
+
+def _embedding_dataset_and_tile(task):
+    """Map an embedding task name like ``PASTIS_joint_T31TFJ`` to (dataset, tile)."""
+    tile = task.split("_")[-1]
+    if "BurnScars" in task:
+        return "HLS_BrunScars", tile
+    if "PASTIS" in task:
+        return "PASTIS", tile
+    if "BFP" in task:
+        return "BFP", tile
+    raise ValueError(f"Unsupported annual embedding task: {task}")
+
+
+def _embedding_manifest_for_task(configured_path, dataset_name, tile, input_source):
+    """Resolve the per-tile embedding manifest for a task.
+
+    The configured ``manifest_path`` names one tile, but cross-region evaluation needs the
+    manifest of whichever tile is being read. Derive that filename from (dataset, tile) and
+    require it to exist: silently falling back to the configured path would evaluate on the
+    wrong tile's embeddings and report a plausible-looking but meaningless number.
+    """
+    manifest_path = Path(configured_path)
+    expected_name = f"{dataset_name}_{tile}_{input_source}.parquet"
+    candidate = manifest_path.with_name(expected_name)
+    if not candidate.exists():
+        raise FileNotFoundError(
+            f"Embedding manifest for {dataset_name}/{tile} ({input_source}) not found at "
+            f"{candidate}. Cross-region evaluation requires the target tile's own manifest."
+        )
+    return str(candidate)
+
+
 def load_model_class(
-    task, 
-    model_type, 
-    MODEL_PATH, 
-    NUM_CLASSES, 
-    ACTIVATION_FUNCTION):
+    task,
+    model_type,
+    MODEL_PATH,
+    NUM_CLASSES,
+    ACTIVATION_FUNCTION,
+    TERRATORCH_CONFIG=None):
     if model_type in ["replace_final_block", "replace_final_block_4x"]:
         
         if "BFPBinary" in task:
@@ -227,6 +291,12 @@ def load_model_class(
                             bilinear=True,
                             activation=ACTIVATION_FUNCTION,
                             upsample_4x=False)
+
+    elif model_type == "terratorch_factory":
+        model = TerraTorchFactorySegmentationModel(
+            config=TERRATORCH_CONFIG,
+            num_classes=NUM_CLASSES,
+        )
 
     else:
         raise ValueError("Invalid model_type")
